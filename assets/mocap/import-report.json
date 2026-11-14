@@ -1,0 +1,324 @@
+[
+ {
+  "name": "idle",
+  "file": "offensive idle.fbx",
+  "sec": 10.5667,
+  "frames": 317,
+  "hipTravel": 0.0013,
+  "hipY": [
+   0.9681,
+   1.0029
+  ],
+  "contact": 0,
+  "kickFoot": "R",
+  "strikes": {
+   "L": [
+    0.1356,
+    0.1514,
+    0.2019,
+    0.3722,
+    0.7476,
+    0.7571
+   ],
+   "R": [
+    0.2461,
+    0.2587,
+    0.2808,
+    0.6877
+   ]
+  },
+  "ankleLift": 0.1764,
+  "ankleZ": [
+   -0.1264,
+   0.2026
+  ],
+  "kb": 188
+ },
+ {
+  "name": "jog-forward",
+  "file": "jog forward.fbx",
+  "sec": 0.8333,
+  "frames": 25,
+  "hipTravel": 1.9392,
+  "hipY": [
+   0.9328,
+   1.027
+  ],
+  "contact": 0,
+  "kickFoot": "R",
+  "strikes": {
+   "L": [
+    0.12
+   ],
+   "R": [
+    0.6
+   ]
+  },
+  "ankleLift": 0.2687,
+  "ankleZ": [
+   -0.1855,
+   1.6828
+  ],
+  "kb": 15
+ },
+ {
+  "name": "jog-backward",
+  "file": "jog backward.fbx",
+  "sec": 0.8,
+  "frames": 24,
+  "hipTravel": 1.7001,
+  "hipY": [
+   0.8954,
+   1.0313
+  ],
+  "contact": 0,
+  "kickFoot": "R",
+  "strikes": {
+   "L": [
+    0.375
+   ],
+   "R": [
+    0.8333
+   ]
+  },
+  "ankleLift": 0.22,
+  "ankleZ": [
+   -1.6841,
+   -0.0461
+  ],
+  "kb": 14
+ },
+ {
+  "name": "jog-left",
+  "file": "jog strafe left.fbx",
+  "sec": 0.7,
+  "frames": 21,
+  "hipTravel": 1.8939,
+  "hipY": [
+   0.9066,
+   0.9733
+  ],
+  "contact": 0,
+  "kickFoot": "R",
+  "strikes": {
+   "L": [
+    0.4286
+   ],
+   "R": [
+    0.9048
+   ]
+  },
+  "ankleLift": 0.1114,
+  "ankleZ": [
+   0.0928,
+   0.1763
+  ],
+  "kb": 13
+ },
+ {
+  "name": "jog-right",
+  "file": "jog strafe right.fbx",
+  "sec": 0.7333,
+  "frames": 22,
+  "hipTravel": 1.6257,
+  "hipY": [
+   0.9464,
+   1.0024
+  ],
+  "contact": 0,
+  "kickFoot": "R",
+  "strikes": {
+   "L": [
+    0.8636
+   ],
+   "R": [
+    0.3636
+   ]
+  },
+  "ankleLift": 0.1364,
+  "ankleZ": [
+   -0.1779,
+   -0.0785
+  ],
+  "kb": 13
+ },
+ {
+  "name": "dribble",
+  "file": "Dribble.fbx",
+  "sec": 1.7333,
+  "frames": 52,
+  "hipTravel": 4.5116,
+  "hipY": [
+   0.864,
+   1.0186
+  ],
+  "contact": 0,
+  "kickFoot": "R",
+  "strikes": {
+   "L": [
+    0.0385,
+    0.1538,
+    0.5577,
+    0.6346
+   ],
+   "R": [
+    0.1923,
+    0.7692
+   ]
+  },
+  "ankleLift": 0.2133,
+  "ankleZ": [
+   -0.1888,
+   4.2589
+  ],
+  "kb": 31
+ },
+ {
+  "name": "kick",
+  "file": "kick soccerball.fbx",
+  "sec": 0.5667,
+  "frames": 18,
+  "hipTravel": 0,
+  "hipY": [
+   0.8973,
+   0.9711
+  ],
+  "contact": 0.1667,
+  "kickFoot": "L",
+  "strikes": {
+   "L": [
+    0.7778
+   ],
+   "R": [
+    0.1111,
+    0.2778
+   ]
+  },
+  "ankleLift": 0.3231,
+  "ankleZ": [
+   -0.0726,
+   0.7331
+  ],
+  "kb": 11
+ },
+ {
+  "name": "strike-jog",
+  "file": "strike foward jog.fbx",
+  "sec": 1.3,
+  "frames": 40,
+  "hipTravel": 0,
+  "hipY": [
+   0.8444,
+   1.1444
+  ],
+  "contact": 0.4333,
+  "kickFoot": "R",
+  "strikes": {
+   "L": [
+    0.225,
+    0.7
+   ],
+   "R": [
+    0.275,
+    0.675
+   ]
+  },
+  "ankleLift": 0.2177,
+  "ankleZ": [
+   -0.1667,
+   2.7523
+  ],
+  "kb": 24
+ },
+ {
+  "name": "receive",
+  "file": "receive soccerball.fbx",
+  "sec": 5.1333,
+  "frames": 155,
+  "hipTravel": 0,
+  "hipY": [
+   0.8185,
+   0.9989
+  ],
+  "contact": 0.1,
+  "kickFoot": "L",
+  "strikes": {
+   "L": [
+    0.0065,
+    0.0387,
+    0.1032,
+    0.2903,
+    0.4065,
+    0.8452
+   ],
+   "R": [
+    0.0581,
+    0.0968,
+    0.329,
+    0.471,
+    0.6452
+   ]
+  },
+  "ankleLift": 0.2953,
+  "ankleZ": [
+   -0.1124,
+   2.7081
+  ],
+  "kb": 92
+ },
+ {
+  "name": "knee",
+  "file": "kneeing soccerball.fbx",
+  "sec": 0.9,
+  "frames": 28,
+  "hipTravel": 0,
+  "hipY": [
+   0.9376,
+   0.9763
+  ],
+  "contact": 0.2667,
+  "kickFoot": "L",
+  "strikes": {
+   "L": [
+    0.8214
+   ],
+   "R": [
+    0.1786
+   ]
+  },
+  "ankleLift": 0.4455,
+  "ankleZ": [
+   -0.0802,
+   0.1721
+  ],
+  "kb": 17
+ },
+ {
+  "name": "header",
+  "file": "header soccerball.fbx",
+  "sec": 1.9,
+  "frames": 58,
+  "hipTravel": 0,
+  "hipY": [
+   0.8666,
+   0.9847
+  ],
+  "contact": 1.2667,
+  "kickFoot": "R",
+  "strikes": {
+   "L": [
+    0.2586,
+    0.5345
+   ],
+   "R": [
+    0.6724
+   ]
+  },
+  "ankleLift": 0.0326,
+  "ankleZ": [
+   0.008,
+   0.0959
+  ],
+  "kb": 35
+ }
+]

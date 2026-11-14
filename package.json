@@ -1,0 +1,27 @@
+{
+  "name": "soccer-duel-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Soccer Duel Desktop: arcade 1v1 football (Three.js + Vite) with an authoritative online match server, written from scratch.",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 3014 --strictPort",
+    "server": "node server/index.js",
+    "server:dev": "node --watch server/index.js",
+    "start": "node server/index.js",
+    "build": "vite build",
+    "build:lab": "vite build --mode lab",
+    "preview": "vite preview --host 127.0.0.1 --port 4184",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "three": "^0.185.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
