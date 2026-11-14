@@ -50,6 +50,8 @@ export class NetClient {
     };
     ws.onmessage = (e) => {
       if (this.ws !== ws) return;
+      // накопившиеся состояния до подтверждения синхронизации даже не разбираются
+      if (s.waitSync && typeof e.data === 'string' && e.data.startsWith('{"t":"s"')) return;
       let m;
       try { m = JSON.parse(e.data); } catch { return; }
       if (!m || typeof m.t !== 'string') return;

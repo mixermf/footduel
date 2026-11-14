@@ -238,6 +238,7 @@ export class PlayerRig {
     const kicking = kPhase === 'windup' || kPhase === 'swing' || kPhase === 'curl';
 
     const pose = this._mocapPose(s, aux, dt, f, r, speed);
+    const gd = this._spring('guard', aux.guard ? 1 : 0, 5, 0.85, dt); // защитная стойка: ниже, шире, руки в стороны
 
     // высота бьющей стопы над опорой: чем выше мяч, тем сильнее корпус уходит назад и вбок (удар с лёта)
     const kickSide = kick ? kick.footSide : 0;
@@ -246,6 +247,7 @@ export class PlayerRig {
     // добавочный наклон: поза клипа уже содержит наклон бега, здесь только ускорение, спринт и события
     let leanFT = clamp(0.015 * this._acc.f + 0.07 * run + 0.045 * Math.max(0, speed - 2.6), -0.26, 0.36);
     if (g && (g.type === 'chest' || g.type === 'hit')) leanFT -= 0.18 * gw;
+    leanFT += 0.15 * gd;
     const leanF = this._spring('leanF', leanFT, 3.4, 0.8, dt) - 0.32 * kh;
     const leanS = this._spring('leanS', clamp(0.017 * this._acc.r, -0.3, 0.3), 3.4, 0.75, dt) - kickSide * 0.42 * kh; // >0 — наклон вправо
     const yawQ = this._yawQuat(th, new THREE.Quaternion());
@@ -276,6 +278,7 @@ export class PlayerRig {
         if (vyEst > 0.4) { swT = Math.max(swT, 1.15); abdT = Math.max(abdT, 0.4); flexT = 0.5; } // мах вверх на взлёте
         else { swT = Math.max(swT, 0.25); abdT = Math.max(abdT, 0.9); flexT = 0.25; } // разведение на спуске
       }
+      if (gd > 0.01 && !kOn && !air) { swT += (0.28 - swT) * gd; abdT = Math.max(abdT, 0.55 * gd); flexT += (0.75 - flexT) * gd; }
       const sw = this._spring('aSw' + i, swT, 5.5, 0.55, dt), abd = this._spring('aAbd' + i, abdT, 5, 0.65, dt), flex = this._spring('aFl' + i, flexT, 5.5, 0.6, dt);
       const upper = addQ.clone().multiply(_q.setFromAxisAngle(r, sw)).multiply(_q2.setFromAxisAngle(f, -side * abd));
       const fore = addQ.clone().multiply(_q.setFromAxisAngle(r, sw + flex)).multiply(_q2.setFromAxisAngle(f, -side * abd));
@@ -305,7 +308,7 @@ export class PlayerRig {
     this._wasAir = air;
     const squash = this._spring('squash', 0, 3.2, 0.55, dt);
     const crouch = 0.012 + Math.min(0.05, accMag * 0.0035) + (kPhase === 'windup' || kPhase === 'swing' ? 0.02 + 0.02 * kc : 0)
-      + (feetT[0].top || feetT[1].top ? 0.03 : 0) + Math.max(0, squash);
+      + (feetT[0].top || feetT[1].top ? 0.03 : 0) + Math.max(0, squash) + 0.1 * gd;
     const swayX = pose.hips.x * this.hipRestY;
     const cx = s.px + r.x * -swayX + f.x * leanF * 0.15, cz = s.pz + r.z * -swayX + f.z * leanF * 0.15;
     let allowed = 9;
@@ -320,7 +323,7 @@ export class PlayerRig {
         const Lmax = (L.l1 + L.l2) * 0.992;
         allowed = Math.min(allowed, A0.y + Math.sqrt(Math.max(0.04, Lmax * Lmax - dh2)) - this.hipJointDy);
       }
-      allowed = Math.max(allowed, this.hipRestY - 0.16);
+      allowed = Math.max(allowed, this.hipRestY - 0.16 - 0.08 * gd);
     }
     const pelT = Math.min(pose.hips.y * this.hipRestY - crouch, allowed);
     const pelvisY = s.py + this._spring('pelY', pelT, 8, 0.9, dt);

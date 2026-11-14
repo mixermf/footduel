@@ -46,7 +46,7 @@ export class Hud {
     const charge = k ? k.charge : 0;
     this.charge.querySelector('b').style.width = Math.round(charge * 100) + '%';
     this.charge.querySelector('[data-v]').textContent = k ? Math.round(charge * 100) + '%' : '';
-    const mode = p.mode === 'sprint' ? 'Спринт' : p.mode === 'control' ? 'Близкий контроль' : 'Бег';
+    const mode = p.lunge ? 'Рывок' : p.mode === 'guard' ? 'Защитная стойка' : p.mode === 'sprint' ? 'Спринт' : p.mode === 'control' ? 'Близкий контроль' : 'Бег';
     const phase = !k ? (p.possession ? 'мяч под контролем' : 'без мяча')
       : k.plan ? 'выход на мяч — удар в касание'
         : k.phase === 'charge' ? 'заряд — направления управляют прицелом'
@@ -60,7 +60,7 @@ export class Hud {
       const h = (a) => `<kbd>${input.hintFor(a)}</kbd>`;
       const move = input.lastDevice === 'keyboard' ? '<kbd>WASD</kbd>' : '<kbd>левый стик</kbd>';
       const ctl = input.lastDevice === 'keyboard' ? h('receive') : `${h('receive')}/${h('control')}`;
-      this.hint.innerHTML = `${move} движение · ${h('kick')} удар · ${h('jump')} прыжок · ${ctl} приём/контроль · ${h('faceGoal')} к воротам · ${h('sprint')} спринт · ${h('pause')} пауза`
+      this.hint.innerHTML = `${move} движение · ${h('kick')} удар · ${h('jump')} прыжок · ${ctl} приём/контроль · ${h('faceGoal')} к воротам · ${h('sprint')} спринт · ${input.lastDevice === 'keyboard' ? h('guard') : h('faceGoal')} стойка, с ${h('jump')} рывок · ${h('pause')} пауза`
         + (input.lastDevice === 'keyboard' && !net ? ' · <kbd>R</kbd> мяч · <kbd>F</kbd> подача · <kbd>G</kbd> щит' : '');
     }
     if (this._toastT > 0) { this._toastT -= dt; if (this._toastT <= 0) this.toast.classList.remove('show'); }

@@ -4,7 +4,7 @@
 export const DEFAULT_KEYS = {
   up: ['KeyW', 'ArrowUp'], down: ['KeyS', 'ArrowDown'], left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
   kick: ['KeyJ'], jump: ['Space'], receive: ['KeyE'], faceGoal: ['KeyQ'],
-  sprint: ['KeyC', 'ShiftLeft', 'ShiftRight'], feint: ['KeyT'], super: ['KeyX'],
+  sprint: ['KeyC'], guard: ['ShiftLeft', 'ShiftRight'], feint: ['KeyT'], super: ['KeyX'],
   pause: ['Escape'], confirm: ['Enter'], ballReturn: ['KeyR'], serve: ['KeyF'], wall: ['KeyG'],
 };
 
@@ -14,7 +14,7 @@ export const DEFAULT_PAD = {
   pause: 9, confirm: 0, back: 1, up: 12, down: 13, left: 14, right: 15,
 };
 
-const STORAGE_KEY = 'soccer-duel-desktop.bindings.v1';
+const STORAGE_KEY = 'soccer-duel-desktop.bindings.v2'; // v2: Shift — защитная стойка
 
 export function findConflicts(keys) {
   const seen = new Map(), conflicts = [];
@@ -158,6 +158,7 @@ export class Input {
     out.controlHeld = this._held('receive') || this._held('control');
     out.faceGoalHeld = this._held('faceGoal');
     out.sprintHeld = this._held('sprint');
+    out.guardHeld = this._held('guard') || !!this._padHeld.faceGoal; // с мячом LT разворачивает к воротам, без мяча — стойка
     const p = this.pressed;
     out.kickPressed = edges && p.has('kick');
     out.jumpPressed = edges && p.has('jump');

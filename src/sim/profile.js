@@ -51,6 +51,15 @@ export function createProfile() {
       aimRateDigital: 4.5, aimRateAnalog: 14,
       errBase: 0.5, errSpeed: 0.5, errTurn: 2.5, errCharge: 1.0, errOffset: 6,
     },
+    // защитная стойка: игрок без мяча стоит лицом к мячу, двигается приставным шагом и принимает мяч телом
+    guard: {
+      speed: 2.7, accel: 26, brake: 30, // приставной шаг: медленнее бега, но резче старт и остановка
+      spread: 1.7, // стопы шире обычной стойки
+      reach: 0.09, lungeReach: 0.16, // прибавка к радиусу тела при приёме: шире стойка, вынесенная нога в выпаде, м
+      quality: 0.72, lungeQuality: 0.6, // качество приёма без точного нажатия (1 — идеальный приём по таймингу)
+      lungeSpeed: 6.4, lungeTime: 0.17, lungeRecover: 0.2, lungeCooldown: 0.4, // рывок: скорость, длительность, выход, пауза
+      lungeAccel: 70,
+    },
     receive: { window: 0.18, idealFrom: 0.03, idealTo: 0.12, passiveRestitution: 0.45 },
     input: { buffer: 0.1, deadzone: 0.15 },
     match: { goalPause: 1.3, goalsToWin: 7, idleRestart: 6 }, // idleRestart: дуэль — мяч, замерший без владения, вводится заново, с

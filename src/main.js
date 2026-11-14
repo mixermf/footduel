@@ -42,7 +42,7 @@ window.__game = LAB_ENABLED ? game : undefined;
 const { input, scene, rig, rig2, hud, sfx } = game;
 let world = sandbox;
 const simDt = world.dt;
-let acc = 0, last = performance.now();
+let acc = 0, last = performance.now(), lastRaw = last;
 let prev = duel.snapshot(), cur = duel.snapshot();
 const view = duel.snapshot();
 const frameIn = emptyInput();
@@ -107,7 +107,9 @@ const CONTROLS = [
   ['Прыжок; при владении — подброс', 'Пробел', 'Y / △'],
   ['Точный приём; удержание — близкий контроль', 'E', 'A / × ; RT / R2'],
   ['Разворот к воротам и контроль', 'Q', 'LT / L2'],
-  ['Спринт', 'C, Shift', 'RB / R1'],
+  ['Спринт', 'C', 'RB / R1'],
+  ['Защитная стойка без мяча: лицом к мячу, мягкий приём телом', 'Shift (удерживать)', 'LT / L2 (удерживать)'],
+  ['Рывок в стойке', 'Shift + направление + Пробел', 'LT + стик + Y / △'],
   ['Вернуть мяч; подача; щит вместо ворот (песочница)', 'R; F; G', 'меню паузы'],
   ['Финт, суперудар', 'T, X', 'B / ○, LB / L1 — следующий этап'],
 ];
@@ -200,8 +202,27 @@ function lostFocus(text) {
   if (game.mode === 'online') { if (game.net?.session.playing) game.net.session.neutral(); return; } // сетевой матч идёт дальше
   if (AUTO_PAUSE) pause(text);
 }
+// Сетевой матч: после скрытого окна или долгого простоя клиент не догоняет пропущенное, а берёт последнее состояние
+function resyncOnline() {
+  const s = game.net?.session;
+  if (!s || s.me < 0) return;
+  s.resync();
+  input.releaseAll(); input.pressed.clear();
+  acc = 0; last = performance.now(); lastRaw = last;
+}
+// Кадры перестали идти без события скрытия (окно свёрнуто или перекрыто, а вкладка считается видимой):
+// таймеры в фоне ещё работают — просим сервер не слать состояния, пока игра не рисуется
+setInterval(() => {
+  const s = game.mode === 'online' ? game.net?.session : null;
+  if (s && s.state === 'play' && !s.waitSync && performance.now() - lastRaw > 600) { input.releaseAll(); s.hold(); }
+}, 250);
 window.addEventListener('blur', () => lostFocus('Окно потеряло фокус. Enter / A — продолжить.'));
-document.addEventListener('visibilitychange', () => { if (document.hidden) lostFocus('Окно было скрыто. Enter / A — продолжить.'); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    lostFocus('Окно было скрыто. Enter / A — продолжить.');
+    if (game.mode === 'online' && game.net && game.net.session.me >= 0) game.net.session.hold();
+  } else if (game.mode === 'online') resyncOnline();
+});
 game.manualFrame = (dt) => runFrame(last + dt * 1000);
 input.onDeviceLost = () => pause('Геймпад отключён. Enter — продолжить на клавиатуре.');
 window.addEventListener('pointerdown', () => sfx.unlock());
@@ -239,7 +260,7 @@ function handleEvents(events, me = 0, accept = null) {
       case 'receive':
         sfx.play(e.quality >= 1 ? 'receive' : 'receive_bad');
         if (!mine) break;
-        hud.showToast(e.quality >= 1 ? 'Точный приём' : 'Неполный приём', { ms: 600 });
+        hud.showToast(e.quality >= 1 ? 'Точный приём' : e.guard ? 'Приём в стойке' : 'Неполный приём', { ms: 600 });
         if (game.settings.vibration) input.rumble(0.25, 60);
         break;
       case 'header': sfx.play('body', 0.6); if (mine) hud.showToast('Игра головой', { ms: 500 }); break;
@@ -308,6 +329,10 @@ function stepOnline(dtReal, now) {
   if (!net) { acc = 0; return; }
   net.update(now);
   const s = net.session, me = s.me;
+  // кадры не шли дольше 0,3 с (вкладка в фоне без события скрытия, зависание): синхронизация заново
+  const stalled = now - lastRaw > 300;
+  lastRaw = now;
+  if ((stalled && s.state === 'play' && !s.waitSync) || s.waitSync === -1) resyncOnline(); // -1: рассылка была остановлена, кадры пошли снова
   s.reconcile(prev, cur);
   if (s.serverEvents.length) {
     handleEvents(s.serverEvents, me, (e) => e.pi !== me && !BALL_EVENTS.has(e.type));
@@ -361,9 +386,9 @@ function runFrame(now) {
       if ((c === 'pause' || c === 'back') && game.state === 'pause') { resume(); break; }
       hud.menuInput(c); if (c !== 'confirm') sfx.play('ui');
     }
-    if (game.state === 'pause' && online && !sess?.playing) resume(); // матч кончился или прервался, пока было открыто меню
+    if (game.state === 'pause' && online && sess?.state !== 'play') resume(); // матч кончился или прервался, пока было открыто меню
   } else if (game.state === 'play') {
-    if (online && !sess?.playing) { for (const c of menuCmds) lobby.input(c === 'pause' ? 'back' : c); }
+    if (online && sess?.state !== 'play') { for (const c of menuCmds) lobby.input(c === 'pause' ? 'back' : c); }
     else if (menuCmds.includes('pause')) pause();
   }
 
@@ -385,8 +410,8 @@ function runFrame(now) {
   const P0 = world.players[0], P1 = world.players[1];
   const mine = world.players[sess && sess.me === 1 ? 1 : 0];
   scene.updateBall(view.bx, view.by, view.bz, cur.bqx, cur.bqy, cur.bqz, cur.bqw);
-  rig.update(view, { ball, kick: P0.kick, gesture: P0.gesture }, dtVis);
-  if (online && P1) rig2.update(view.p2, { ball, kick: P1.kick, gesture: P1.gesture }, dtVis);
+  rig.update(view, { ball, kick: P0.kick, gesture: P0.gesture, guard: P0.guard || !!P0.lunge }, dtVis);
+  if (online && P1) rig2.update(view.p2, { ball, kick: P1.kick, gesture: P1.gesture, guard: P1.guard || !!P1.lunge }, dtVis);
   scene.updateAim(mine.kick, world.P);
   scene.updateCamera(view.px, view.pz, view.yaw, dtReal);
   game.lab?.onFrame(dtReal);

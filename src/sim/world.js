@@ -14,7 +14,7 @@ export function emptyInput() {
     mx: 0, mz: 0, digital: true,
     kickHeld: false, kickPressed: false,
     jumpPressed: false, receivePressed: false,
-    controlHeld: false, faceGoalHeld: false, sprintHeld: false,
+    controlHeld: false, faceGoalHeld: false, sprintHeld: false, guardHeld: false,
     feintPressed: false, superPressed: false,
     // команды песочницы — часть кадра ввода: попадают в журнал, и повтор записи остаётся точным
     cmdReturn: false, cmdServe: false, cmdWall: false,
@@ -34,6 +34,7 @@ function createPlayer(side) {
     kick: null, kickBuf: 0, jumpBuf: 0, receiveT: 0, flick: false,
     lastTouchTick: -1000, lastKickTick: -1000,
     gesture: null, mode: 'run', yawVel: 0, dragSign: 0, lastTouchKind: null,
+    guard: false, lunge: null, lungeCd: 0, recvTick: -1000,
   };
 }
 
@@ -325,7 +326,8 @@ export class World {
     p.jumpBuf = Math.max(0, p.jumpBuf - dt);
     p.receiveT = Math.max(0, p.receiveT - dt);
     if (p.gesture) { p.gesture.t += dt; if (p.gesture.t > 0.35) p.gesture = null; }
-    if (!live) { p.kickBuf = p.jumpBuf = 0; return; }
+    p.lungeCd = Math.max(0, p.lungeCd - dt);
+    if (!live) { p.kickBuf = p.jumpBuf = 0; p.guard = false; p.mode = input.sprintHeld ? 'sprint' : 'run'; return; }
 
     if (input.kickPressed && !p.kick) p.kickBuf = P.input.buffer;
     if (input.jumpPressed) p.jumpBuf = P.input.buffer;
@@ -334,6 +336,21 @@ export class World {
 
     if (p.kickBuf > 0 && !p.kick) { p.kickBuf = 0; this._startKick(p, input); }
     if (p.kick) this._kickLogic(p, input);
+
+    // защитная стойка — только без мяча и вне удара; с мячом та же кнопка ничего не меняет
+    p.guard = input.guardHeld && !p.possession && !p.kick && p.y <= 0;
+    if (p.guard) {
+      p.mode = 'guard';
+      const m = Math.hypot(input.mx, input.mz);
+      if (p.jumpBuf > 0 && m > 0.3) {
+        // прыжок с направлением в стойке — рывок в сторону; без направления остаётся обычный прыжок
+        p.jumpBuf = 0;
+        if (!p.lunge && p.lungeCd <= 0) {
+          p.lunge = { t: 0, dx: input.mx / m, dz: input.mz / m };
+          this.events.push({ type: 'lunge' });
+        }
+      }
+    }
 
     const kickWaiting = p.kick && (p.kick.phase === 'charge' || p.kick.phase === 'ready');
     if (p.jumpBuf > 0 && p.y <= 0 && (!p.kick || kickWaiting)) {
@@ -405,7 +422,7 @@ export class World {
 
   _modeSpeed(p) {
     const P = this.P.player;
-    return p.mode === 'sprint' ? P.sprintSpeed : p.mode === 'control' ? P.controlSpeed : P.runSpeed;
+    return p.mode === 'guard' ? this.P.guard.speed : p.mode === 'sprint' ? P.sprintSpeed : p.mode === 'control' ? P.controlSpeed : P.runSpeed;
   }
 
   // ---------- мотор ----------
@@ -415,10 +432,31 @@ export class World {
     let ix = 0, iz = 0;
     if (mag > 0.05) { const m = Math.hypot(input.mx, input.mz); ix = input.mx / m; iz = input.mz / m; }
     const ms = this._modeSpeed(p);
-    let dvx = 0, dvz = 0, rateScale = 1, faceYaw = null, faceBall = false;
+    let dvx = 0, dvz = 0, rateScale = 1, faceYaw = null, faceBall = false, ov = null;
     const k = p.kick;
+    const toBall = () => (Math.hypot(b.x - p.x, b.z - p.z) > 0.25 ? Math.atan2(b.z - p.z, b.x - p.x) : null);
 
-    if (k && k.plan && (k.phase === 'charge' || k.phase === 'ready' || (k.phase === 'windup' && k.dyn))) {
+    if (p.lunge && !k) {
+      // рывок: короткий мощный толчок в сторону, затем быстрое торможение; корпус остаётся лицом к мячу
+      const L = p.lunge, G = P.guard;
+      L.t += dt;
+      if (L.t < G.lungeTime && !p.possession) { dvx = L.dx * G.lungeSpeed; dvz = L.dz * G.lungeSpeed; ov = { a: G.lungeAccel, b: G.lungeAccel }; }
+      else { if (L.t < G.lungeTime) L.t = G.lungeTime; ov = { a: G.brake, b: G.brake }; }
+      faceYaw = toBall();
+      if (L.t >= G.lungeTime + G.lungeRecover) { p.lunge = null; p.lungeCd = G.lungeCooldown; }
+    } else if (p.guard) {
+      // стойка: приставной шаг в любую сторону, корпус всегда развёрнут к мячу
+      const G = P.guard;
+      dvx = ix * G.speed * mag; dvz = iz * G.speed * mag;
+      if (mag <= 0.05 && (this.tick - p.recvTick) * dt < 1.2) {
+        // сразу после приёма, если игрок ничего не жмёт, он сам делает шаг за опускающимся мячом — к точке следующего касания
+        const ex = b.x + b.vx * 0.25 - Math.cos(p.yaw) * 0.45 - p.x, ez = b.z + b.vz * 0.25 - Math.sin(p.yaw) * 0.45 - p.z, el = Math.hypot(ex, ez);
+        if (el > 0.08) { const sp = Math.min(G.speed, el * 6); dvx = (ex / el) * sp; dvz = (ez / el) * sp; }
+      }
+      ov = { a: G.accel, b: G.brake };
+      faceYaw = toBall();
+      rateScale = 1.3;
+    } else if (k && k.plan && (k.phase === 'charge' || k.phase === 'ready' || (k.phase === 'windup' && k.dyn))) {
       // удар в касание: выйти в точку встречи к расчётному моменту, корпус — по линии удара
       const ex = k.plan.sx - p.x, ez = k.plan.sz - p.z, el = Math.hypot(ex, ez);
       const tl = k.phase === 'windup' ? k.windDur - k.t + P.kick.strikeSwing : k.plan.t;
@@ -507,7 +545,7 @@ export class World {
       if (el > 1e-6) {
         const stopping = Math.hypot(dvx, dvz) < 0.05;
         const opposing = p.vx * ex + p.vz * ez < 0;
-        const rate = (stopping ? PP.brake : opposing ? PP.reverseBrake : PP.accel) * rateScale;
+        const rate = ov ? (stopping || opposing ? ov.b : ov.a) : (stopping ? PP.brake : opposing ? PP.reverseBrake : PP.accel) * rateScale;
         const s = Math.min(el, rate * dt);
         p.vx += (ex / el) * s; p.vz += (ez / el) * s;
       }
@@ -516,7 +554,7 @@ export class World {
 
     // ориентация корпуса — отдельно от намерения и скорости
     if (faceYaw !== null) {
-      const d = angDiff(faceYaw, p.yaw), w0 = PP.turnSpring;
+      const d = angDiff(faceYaw, p.yaw), w0 = PP.turnSpring * (p.guard || p.lunge ? 1.3 : 1);
       p.yawVel += (w0 * w0 * d - 2 * w0 * p.yawVel) * dt;
       p.yawVel = clamp(p.yawVel, -PP.turnRate, PP.turnRate);
     } else p.yawVel *= Math.exp(-14 * dt);
@@ -549,11 +587,13 @@ export class World {
     const speed = Math.hypot(p.vx, p.vz);
     const fx = Math.cos(p.yaw), fz = Math.sin(p.yaw), rx = -fz, rz = fx;
     const feet = p.feet;
+    const wide = p.guard || p.lunge;
+    const spread = PP.footSpread * (wide ? P.guard.spread : 1);
 
     if (p.y > 0) {
       for (const f of feet) {
         if (f.ctl) continue;
-        const hx = p.x + rx * f.side * PP.footSpread, hz = p.z + rz * f.side * PP.footSpread;
+        const hx = p.x + rx * f.side * spread, hz = p.z + rz * f.side * spread;
         const a = Math.min(1, 14 * dt);
         f.x += (hx - f.x) * a; f.z += (hz - f.z) * a;
         f.h = Math.max(f.h, 0) + (p.y - f.h) * Math.min(1, 20 * dt);
@@ -587,7 +627,7 @@ export class World {
     for (let i = 0; i < 2; i++) {
       const f = feet[i], o = feet[1 - i];
       if (f.ctl) continue;
-      const hx = p.x + rx * f.side * PP.footSpread, hz = p.z + rz * f.side * PP.footSpread;
+      const hx = p.x + rx * f.side * spread, hz = p.z + rz * f.side * spread;
       if (f.swing) {
         const s = f.swing;
         s.t += dt;
@@ -682,7 +722,7 @@ export class World {
           const yawErr = Math.abs(angDiff(p.yaw, f.yaw));
           const reachable = plan && Math.hypot(b.x - p.x, b.z - p.z) < PP.legReach;
           if (reachable && this._touchFoot(p, plan, rx, rz) === i) this._lift(f, 0.15, 0.05, false);
-          else if (dHome > 0.13 || yawErr > 0.6) this._lift(f, 0.16, 0.04, false);
+          else if (dHome > (wide ? 0.05 : 0.13) || yawErr > 0.6) this._lift(f, wide ? 0.12 : 0.16, 0.04, false);
         }
       }
     }
@@ -734,7 +774,7 @@ export class World {
       e1: this.rng.signed(), e2: this.rng.signed(), // случайность — один раз на попытку
       startYaw: p.yaw, curlIn: 0, curlN: 0, hit: false, plan: null, dynamic: false, dyn: false, high: false, jumped: false, commitTick: 0,
     };
-    p.flick = false;
+    p.flick = false; p.lunge = null; p.guard = false;
     this.events.push({ type: 'kick_start' });
   }
 
@@ -1021,7 +1061,10 @@ export class World {
 
   // ---------- корпус и приём ----------
   _bodyCollision(p, b) {
-    const P = this.P, R = P.player.radius, r = P.ball.radius;
+    const P = this.P, G = P.guard, r = P.ball.radius;
+    const guarding = p.guard || !!p.lunge;
+    // в стойке игрок закрывает больше места: стопы шире, в рывке нога вынесена в сторону
+    const R = P.player.radius + (p.lunge ? G.lungeReach : p.guard ? G.reach : 0);
     const y0 = p.y + R, y1 = p.y + P.player.height - R;
     const cy = clamp(b.y, y0, y1);
     let nx = b.x - p.x, ny = b.y - cy, nz = b.z - p.z;
@@ -1042,19 +1085,28 @@ export class World {
     const zone = relH < 0.4 ? 'foot' : relH < 0.95 ? 'thigh' : relH < 1.45 ? 'chest' : 'head';
     const fx = Math.cos(p.yaw), fz = Math.sin(p.yaw);
 
+    // качество приёма: точное нажатие по таймингу — лучшее; стойка гасит мяч и без нажатия, рывок — чуть хуже
+    let q = 0;
     if (p.receiveT > 0) {
       const age = P.receive.window - p.receiveT;
-      const q = age >= P.receive.idealFrom && age <= P.receive.idealTo ? 1 : 0.5;
-      const leak = (1 - q) * vn * 0.3;
-      if (zone === 'foot') { b.vx = p.vx * 0.6 + nx * (0.3 + leak); b.vz = p.vz * 0.6 + nz * (0.3 + leak); b.vy = 0; }
-      else if (zone === 'thigh') { b.vx = p.vx + fx * (0.5 + leak); b.vz = p.vz + fz * (0.5 + leak); b.vy = 1.6; }
-      else if (zone === 'chest') { b.vx = p.vx + fx * (0.7 + leak); b.vz = p.vz + fz * (0.7 + leak); b.vy = 1.2; }
-      else { b.vx = p.vx + fx * (1.0 + leak); b.vz = p.vz + fz * (1.0 + leak); b.vy = 2.2; }
+      q = age >= P.receive.idealFrom && age <= P.receive.idealTo ? 1 : 0.5;
+    }
+    if (guarding) q = Math.max(q, p.lunge ? G.lungeQuality : G.quality);
+    if (q > 0) {
+      // мяч гасится телом и опускается перед игроком — в зону следующего касания; остаток скорости зависит от качества
+      const leak = guarding ? Math.min(2, (1 - q) * vn * 0.2) : (1 - q) * vn * 0.3; // стойка гасит сильнее: мяч падает в зону контроля
+      const carry = p.lunge ? 0.3 : 1; // в рывке мяч не уносится вместе с игроком
+      const pvx = p.vx * carry, pvz = p.vz * carry;
+      if (zone === 'foot') { b.vx = pvx * 0.6 + nx * (0.3 + leak); b.vz = pvz * 0.6 + nz * (0.3 + leak); b.vy = 0; }
+      else if (zone === 'thigh') { b.vx = pvx + fx * (0.5 + leak); b.vz = pvz + fz * (0.5 + leak); b.vy = guarding ? 1.1 : 1.6; }
+      else if (zone === 'chest') { b.vx = pvx + fx * (0.7 + leak); b.vz = pvz + fz * (0.7 + leak); b.vy = guarding ? 0.7 : 1.2; }
+      else { b.vx = pvx + fx * (1.0 + leak); b.vz = pvz + fz * (1.0 + leak); b.vy = guarding ? 1.6 : 2.2; }
+      p.recvTick = this.tick;
       b.wx = b.wy = b.wz = 0;
       p.receiveT = 0; p.gesture = { type: zone, t: 0 };
       p.lastTouchTick = this.tick - Math.round(0.15 / this.dt); // короткая защита от повторного контакта
       this.stats.receives++;
-      this.events.push({ type: 'receive', zone, quality: q, speed: vn });
+      this.events.push({ type: 'receive', zone, quality: q, speed: vn, guard: guarding });
       return;
     }
     if (zone === 'head' && p.y > 0.05) {
@@ -1102,7 +1154,7 @@ export function packInput(i) {
     Math.round(i.mx * 1000), Math.round(i.mz * 1000),
     (i.digital ? 1 : 0) | (i.kickHeld ? 2 : 0) | (i.kickPressed ? 4 : 0) | (i.jumpPressed ? 8 : 0) | (i.receivePressed ? 16 : 0)
     | (i.controlHeld ? 32 : 0) | (i.faceGoalHeld ? 64 : 0) | (i.sprintHeld ? 128 : 0) | (i.feintPressed ? 256 : 0) | (i.superPressed ? 512 : 0)
-    | (i.cmdReturn ? 1024 : 0) | (i.cmdServe ? 2048 : 0) | (i.cmdWall ? 4096 : 0),
+    | (i.cmdReturn ? 1024 : 0) | (i.cmdServe ? 2048 : 0) | (i.cmdWall ? 4096 : 0) | (i.guardHeld ? 8192 : 0),
   ];
 }
 
@@ -1112,6 +1164,6 @@ export function unpackInput(a, out = emptyInput()) {
   out.digital = !!(f & 1); out.kickHeld = !!(f & 2); out.kickPressed = !!(f & 4); out.jumpPressed = !!(f & 8);
   out.receivePressed = !!(f & 16); out.controlHeld = !!(f & 32); out.faceGoalHeld = !!(f & 64); out.sprintHeld = !!(f & 128);
   out.feintPressed = !!(f & 256); out.superPressed = !!(f & 512);
-  out.cmdReturn = !!(f & 1024); out.cmdServe = !!(f & 2048); out.cmdWall = !!(f & 4096);
+  out.cmdReturn = !!(f & 1024); out.cmdServe = !!(f & 2048); out.cmdWall = !!(f & 4096); out.guardHeld = !!(f & 8192);
   return out;
 }

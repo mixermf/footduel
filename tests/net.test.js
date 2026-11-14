@@ -246,5 +246,43 @@ test('сервер: без ввода удержание сохраняется 
   r.room.message(1, { t: 'in', s: r.room.slots[1].recv + 1, f: [[99999, -99999, 0xffff]] });
   const f = r.room.slots[1].queue.at(-1);
   assert.equal(r.room.slots[1].queue.length, q + 1);
-  assert.deepEqual(f, [1000, -1000, 0x3ff], 'кадр обрезан до допустимых значений, команды песочницы вырезаны');
+  assert.deepEqual(f, [1000, -1000, 0x23ff], 'кадр обрезан до допустимых значений, команды песочницы вырезаны');
+});
+
+test('возврат после скрытого окна: сервер не копит состояния, клиент берёт последнее без догоняния', () => {
+  const r = rig({ delay: 4 });
+  startMatch(r);
+  r.pump(120, () => [inp({ mx: 1 }), inp({ mz: 1 })]);
+  const c = r.clients[1];
+  let sent = 0;
+  const realSend = c.conn.send;
+  c.conn.send = (str) => { if (str.startsWith('{"t":"s"')) sent++; realSend(str); };
+
+  // окно клиента 1 скрыто: он перестаёт шагать, сервер перестаёт слать ему состояния и отпускает его ввод
+  c.net.hold();
+  r.pump(10);
+  sent = 0;
+  const frozenTick = c.world.tick;
+  r.pump(600, () => [inp({ mx: -1 }), inp({ mz: 1 })]);
+  assert.equal(sent, 0, 'скрытому клиенту состояния не отправляются');
+  assert.equal(c.world.tick, frozenTick, 'скрытый клиент не шагает');
+  assert.ok(Math.abs(r.room.world.players[1].vz) < 0.05, 'игрок скрытого клиента стоит');
+  assert.ok(r.room.world.tick - frozenTick > 550, 'матч на сервере идёт дальше');
+
+  // возврат: одно свежее состояние, ни одного доигранного шага, никаких старых событий
+  c.net.serverEvents.push({ type: 'kick' });
+  c.net.snap = { stale: true };
+  c.net.resync();
+  assert.equal(c.net.snap, null);
+  assert.equal(c.net.serverEvents.length, 0);
+  assert.equal(c.net.playing, false, 'до подтверждения синхронизации клиент не шагает');
+  r.pump(12);
+  assert.equal(c.net.waitSync, 0);
+  assert.ok(c.net.playing);
+  assert.ok(Math.abs(c.world.tick - r.room.world.tick) < 20, 'клиент сразу на текущем шаге сервера');
+  assert.ok(c.net.replayed <= 12, 'доигрывается только свежий ввод: ' + c.net.replayed);
+  assert.equal(Math.hypot(c.net.err.p[0].x, c.net.err.p[0].z, c.net.err.b.x, c.net.err.b.z), 0, 'без «резинки» к старому положению');
+  r.pump(120, () => [inp(), inp({ mz: -1 })]);
+  assert.ok(r.room.world.players[1].vz < -1, 'после возврата ввод снова доходит');
+  for (let j = 0; j < 2; j++) assert.ok(Math.abs(c.world.players[j].x - r.room.world.players[j].x) < 0.5);
 });

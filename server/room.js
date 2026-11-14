@@ -36,7 +36,7 @@ export class Room {
     if (i < 0 || this.inMatch) return -1;
     this.slots[i] = {
       conn, name: cleanName(name, i ? 'Гость' : 'Хозяин'), token: randomBytes(12).toString('hex'),
-      connected: true, ready: false, rematch: false, queue: [], seq: 0, recv: 0, last: [0, 0, 1], starve: 0,
+      connected: true, ready: false, rematch: false, queue: [], seq: 0, recv: 0, last: [0, 0, 1], starve: 0, hold: false,
     };
     this._send(i, { t: 'joined', v: NET_VERSION, code: this.code, you: i, token: this.slots[i].token, hz: this.world.P.simHz });
     if (this.count === 2 && this.state === 'waiting') this.state = 'loading';
@@ -49,7 +49,7 @@ export class Room {
     if (i < 0) return -1;
     const s = this.slots[i];
     if (s.connected && s.conn) { try { s.conn.close(); } catch { /* уже закрыто */ } }
-    s.conn = conn; s.connected = true; s.queue.length = 0; s.starve = 0;
+    s.conn = conn; s.connected = true; s.queue.length = 0; s.starve = 0; s.hold = false;
     s.seq = s.recv = Math.max(0, Number(seq) | 0);
     s.last = [0, 0, 1];
     this._send(i, { t: 'joined', v: NET_VERSION, code: this.code, you: i, token: s.token, hz: this.world.P.simHz });
@@ -108,6 +108,16 @@ export class Room {
         }
         break;
       }
+      case 'hold':
+        // окно клиента скрыто: состояния ему не шлём (иначе они копятся и проигрываются потом разом), ввод отпущен
+        s.hold = true; s.queue.length = 0; s.seq = s.recv; s.last = [0, 0, 1];
+        break;
+      case 'sync':
+        // клиент вернулся или заметил длинный простой: всё прежнее забыто, дальше — только свежее состояние
+        s.hold = false; s.queue.length = 0; s.seq = s.recv; s.last = [0, 0, 1]; s.starve = 0;
+        this._send(i, { t: 'synced', n: Number(m.n) | 0 });
+        this._snapshot(i);
+        break;
       case 'rematch':
         if (this.state !== 'over') break;
         s.rematch = true;
@@ -155,6 +165,7 @@ export class Room {
 
   _take(s, out) {
     const q = s.queue;
+    if (s.hold) { s.last = [0, 0, 1]; return unpackInput(s.last, out); }
     if (q.length) {
       let f = q.shift(); s.seq++;
       while (q.length > MAX_BUF) { const n = q.shift(); s.seq++; n[2] |= f[2] & EDGE_BITS; f = n; } // сжатие очереди без потери нажатий
@@ -180,13 +191,16 @@ export class Room {
   }
 
   // ---------- рассылка ----------
-  _snapshot() {
+  // only — номер места для внеочередной отправки одному клиенту (без событий: они уйдут в общей рассылке)
+  _snapshot(only = -1) {
     const w = this.world, st = w.saveState();
     st.stats = undefined;
     const body = '"i":' + JSON.stringify([this.slots[0]?.last ?? [0, 0, 1], this.slots[1]?.last ?? [0, 0, 1]])
-      + ',"e":' + JSON.stringify(this.events) + ',"w":' + JSON.stringify(st) + '}';
-    this.events.length = 0;
-    for (const s of this.slots) if (s && s.connected) s.conn.send('{"t":"s","a":' + s.seq + ',' + body);
+      + ',"e":' + (only < 0 ? JSON.stringify(this.events) : '[]') + ',"w":' + JSON.stringify(st) + '}';
+    if (only < 0) this.events.length = 0;
+    this.slots.forEach((s, i) => {
+      if (s && s.connected && !s.hold && (only < 0 || only === i)) s.conn.send('{"t":"s","a":' + s.seq + ',' + body);
+    });
   }
 
   _lobby() {

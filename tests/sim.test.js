@@ -382,3 +382,86 @@ test('команды песочницы записываются в журнал
   assert.equal(b.hash(), a.w.hash());
   assert.deepEqual(b.stats, a.w.stats);
 });
+
+// ---------- защитная стойка
+const inp = (o = {}) => Object.assign(emptyInput(), o);
+test('защитная стойка: лицом к мячу, приставной шаг, широкие стопы; с мячом не включается', () => {
+  const w = new World(createProfile(), { seed: 4 });
+  w.reset('motor'); // мяч далеко справа-снизу
+  const p = w.player, G = w.P.guard;
+  for (let i = 0; i < 180; i++) w.step(inp({ guardHeld: true, mz: -1 }));
+  assert.equal(p.guard, true);
+  assert.equal(p.mode, 'guard');
+  const sp = Math.hypot(p.vx, p.vz);
+  assert.ok(Math.abs(sp - G.speed) < 0.1, 'скорость приставного шага ' + sp.toFixed(2));
+  const toBall = Math.atan2(w.ball.z - p.z, w.ball.x - p.x);
+  assert.ok(Math.abs(Math.atan2(Math.sin(toBall - p.yaw), Math.cos(toBall - p.yaw))) < 0.2, 'корпус развёрнут к мячу, а не по ходу движения');
+  for (let i = 0; i < 120; i++) w.step(inp({ guardHeld: true }));
+  assert.ok(Math.hypot(p.vx, p.vz) < 0.05, 'остановка в стойке быстрая');
+  const spread = Math.hypot(p.feet[0].x - p.feet[1].x, p.feet[0].z - p.feet[1].z);
+  assert.ok(spread > w.P.player.footSpread * 2 * 1.4, 'стопы расставлены шире: ' + spread.toFixed(3));
+
+  w.reset('free');
+  for (let i = 0; i < 30; i++) w.step(inp({ guardHeld: true }));
+  assert.equal(w.player.possession, true);
+  assert.equal(w.player.guard, false, 'с мячом стойка не включается');
+});
+
+test('рывок в стойке: быстрый сдвиг в сторону, пауза перед следующим; без направления — обычный прыжок', () => {
+  const w = new World(createProfile(), { seed: 4 });
+  w.reset('motor');
+  const p = w.player;
+  for (let i = 0; i < 30; i++) w.step(inp({ guardHeld: true }));
+  const z0 = p.z;
+  let lunges = 0, peak = 0;
+  for (let i = 0; i < 60; i++) {
+    w.step(inp({ guardHeld: true, mz: 1, jumpPressed: i === 0 || i === 20 }));
+    for (const e of w.events) if (e.type === 'lunge') lunges++;
+    peak = Math.max(peak, p.vz);
+    assert.equal(p.y, 0, 'рывок — не прыжок');
+  }
+  assert.equal(lunges, 1, 'второй рывок во время первого и паузы не начинается');
+  assert.ok(peak > 5.5, 'скорость рывка ' + peak.toFixed(2));
+  const d = p.z - z0;
+  assert.ok(d > 1.3 && d < 2.6, 'сдвиг за полсекунды ' + d.toFixed(2) + ' м');
+  for (let i = 0; i < 60; i++) w.step(inp({ guardHeld: true }));
+  let jumped = false;
+  for (let i = 0; i < 40; i++) { w.step(inp({ guardHeld: true, jumpPressed: i === 0 })); if (p.y > 0.05) jumped = true; }
+  assert.ok(jumped, 'без направления остаётся обычный прыжок');
+});
+
+test('приём в стойке: сильный удар гасится телом и мяч остаётся под контролем; без стойки — отлетает', () => {
+  const shoot = (guard, h, speed, lungeAt = -1) => {
+    const w = new World(createProfile(), { seed: 4 });
+    w.reset('motor');
+    const p = w.player, b = w.ball;
+    for (let i = 0; i < 40; i++) w.step(inp({ guardHeld: guard }));
+    b.x = p.x + 7; b.z = p.z + (lungeAt >= 0 ? 1.1 : 0.05); b.y = h; b.vx = -speed; b.vz = 0; b.vy = h > 0.3 ? 1.5 : 0;
+    let rec = null, maxAway = 0, hit = false;
+    for (let i = 0; i < 240; i++) {
+      w.step(inp({ guardHeld: guard, mz: lungeAt >= 0 && i >= lungeAt ? 1 : 0, jumpPressed: i === lungeAt }));
+      for (const e of w.events) { if (e.type === 'receive') rec = e; if (e.type === 'receive' || e.type === 'body') hit = true; }
+      if (hit) maxAway = Math.max(maxAway, Math.hypot(b.x - p.x, b.z - p.z));
+    }
+    return { rec, hit, maxAway, poss: p.possession, speed: Math.hypot(b.vx, b.vz) };
+  };
+  for (const [h, name] of [[0.11, 'низом'], [0.7, 'в бедро'], [1.2, 'в грудь']]) {
+    for (const v of [12, 20]) {
+      const g = shoot(true, h, v);
+      assert.ok(g.rec && g.rec.guard, `${name} ${v} м/с: приём в стойке состоялся`);
+      assert.ok(g.maxAway < 1.8, `${name} ${v} м/с: мяч остался рядом (${g.maxAway.toFixed(2)} м)`);
+      assert.ok(g.poss, `${name} ${v} м/с: мяч под контролем`);
+    }
+  }
+  const n = shoot(false, 0.7, 20);
+  assert.ok(n.hit && !n.rec, 'без стойки — обычный отскок от тела');
+  assert.ok(n.maxAway > 2.5, 'без стойки мяч отлетает: ' + n.maxAway.toFixed(2));
+  // мяч идёт в метре сбоку: стоя не достать, рывком — достать
+  const miss = shoot(true, 0.11, 16);
+  const still = (() => { const w = shoot(true, 0.11, 16, 9999); return w; })();
+  assert.ok(!still.hit, 'мяч в метре сбоку мимо стоящего игрока');
+  const lunge = shoot(true, 0.11, 16, 35);
+  assert.ok(lunge.rec, 'рывок достаёт мяч, идущий в метре сбоку');
+  assert.ok(lunge.maxAway < 2.2, 'после рывка мяч рядом: ' + lunge.maxAway.toFixed(2));
+  assert.ok(miss.rec);
+});

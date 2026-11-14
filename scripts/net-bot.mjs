@@ -18,7 +18,7 @@ world.recording = false;
 const ws = new WebSocket(url);
 const net = new NetSession(world, (o) => { if (ws.readyState === 1) ws.send(JSON.stringify(o)); });
 const prev = {}, cur = {}, input = emptyInput();
-let lastState = '', kickHold = 0, wasHeld = false, fix = 0, fixN = 0;
+let lastState = '', kickHold = 0, wasHeld = false, fix = 0, fixN = 0, lungeWait = 0;
 
 ws.on('open', () => ws.send(JSON.stringify({ t: 'join', v: NET_VERSION, code, name: 'Бот' })));
 ws.on('message', (data) => {
@@ -31,14 +31,21 @@ ws.on('message', (data) => {
 ws.on('close', () => { console.log('Соединение закрыто'); process.exit(0); });
 ws.on('error', (e) => { console.error('Нет соединения с', url, e.message); process.exit(1); });
 
-// Поведение: держаться между мячом и своими воротами; мяч на своей половине — подойти и пробить
+// Поведение: мяч у соперника — защитная стойка перед воротами и рывок под удар; мяч на своей половине — подойти и пробить
 function think() {
   const p = world.players[net.me], b = world.ball, mineHalf = b.x * p.side > 0.2;
   Object.assign(input, emptyInput());
-  const tx = mineHalf ? b.x + p.side * 0.5 : p.side * 5.5, tz = mineHalf ? b.z : b.z * 0.6;
+  const incoming = b.vx * p.side > 4; // мяч летит к воротам бота
+  const loose = mineHalf && !incoming && Math.hypot(b.vx, b.vz) < 6;
+  let tx = p.side * 6.8, tz = Math.max(-1.3, Math.min(1.3, b.z * 0.5));
+  if (incoming && Math.abs(b.vx) > 1) tz = Math.max(-1.6, Math.min(1.6, b.z + b.vz * ((p.x - b.x) / b.vx))); // куда придёт мяч
+  if (loose) { tx = b.x + p.side * 0.5; tz = b.z; }
   const dx = tx - p.x, dz = tz - p.z, d = Math.hypot(dx, dz);
-  if (d > 0.25 && !p.kick) { input.mx = dx / d; input.mz = dz / d; }
-  const near = Math.hypot(b.x - p.x, b.z - p.z) < 1.6 && mineHalf;
+  if (d > 0.2 && !p.kick) { input.mx = dx / d; input.mz = dz / d; }
+  input.guardHeld = !loose && Math.abs(p.x - p.side * 6.8) < 1.5;
+  lungeWait = Math.max(0, lungeWait - 1);
+  if (input.guardHeld && incoming && Math.abs(dz) > 0.7 && lungeWait === 0) { input.mx = 0; input.mz = Math.sign(dz); input.jumpPressed = true; lungeWait = 90; }
+  const near = Math.hypot(b.x - p.x, b.z - p.z) < 1.6 && loose;
   if (near && !p.kick && kickHold <= 0) kickHold = 30 + Math.floor(Math.random() * 30);
   if (kickHold > 0) { kickHold--; input.kickHeld = true; input.kickPressed = !wasHeld; input.mz = Math.sin(world.tick / 37) * 0.8; }
   wasHeld = input.kickHeld;

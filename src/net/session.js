@@ -16,12 +16,13 @@ export class NetSession {
     this.snap = null; this.hasState = false; this.serverEvents = [];
     this.remote = emptyInput(); this._in = emptyInput();
     this.rtt = 0; this.replayed = 0;
+    this.waitSync = 0; this._syncN = 0; this._fresh = false; // ждём подтверждения свежей синхронизации с этим номером
     this.err = { p: [{ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }], b: { x: 0, y: 0, z: 0 } };
     this._before = {}; this._after = {};
   }
 
   get state() { return this.lobby ? this.lobby.state : 'connecting'; }
-  get playing() { return this.state === 'play' && this.hasState; }
+  get playing() { return this.state === 'play' && this.hasState && !this.waitSync; }
 
   handle(m, now = 0) {
     switch (m.t) {
@@ -30,8 +31,13 @@ export class NetSession {
         this.lobby = m; this.lobbyAt = now;
         if (m.state !== 'play') { this.pending.length = 0; this.out.length = 0; }
         break;
+      case 'synced':
+        if (m.n === this.waitSync) { this.waitSync = 0; this._fresh = true; }
+        break;
       case 's':
+        if (this.waitSync) break; // отправлено до синхронизации — устарело
         this.snap = m; // нужно только самое свежее состояние; события копятся все
+        if (this.serverEvents.length > 256) this.serverEvents.length = 0; // кадры не идут — старые события не копятся
         for (const e of m.e) this.serverEvents.push(e);
         break;
       case 'pong': this.rtt += ((now - m.c) - this.rtt) * (this.rtt ? 0.2 : 1); break;
@@ -72,7 +78,8 @@ export class NetSession {
     const m = this.snap;
     if (!m || this.me < 0) return false;
     this.snap = null;
-    const w = this.world, had = this.hasState;
+    const w = this.world, had = this.hasState && !this._fresh;
+    this._fresh = false;
     if (had) w.snapshot(this._before);
     w.loadState(m.w);
     this.hasState = true;
@@ -113,5 +120,21 @@ export class NetSession {
   }
 
   // Сброс при переподключении: неподтверждённый ввод уже не дойдёт
-  resetInput() { this.pending.length = 0; this.out.length = 0; this.snap = null; }
+  resetInput() { this.pending.length = 0; this.out.length = 0; this.snap = null; this.waitSync = 0; this._fresh = true; }
+
+  // Окно скрыто: сервер перестаёт слать состояния, ввод считается отпущенным
+  hold() {
+    this.pending.length = 0; this.out.length = 0; this.snap = null; this.serverEvents.length = 0;
+    this.waitSync = -1;
+    this.send({ t: 'hold' });
+  }
+
+  // Возврат в игру или длинный простой кадра: всё накопленное отбрасывается, клиент берёт только последнее
+  // состояние сервера — без доигрывания пропущенного и без ускорения.
+  resync() {
+    this.pending.length = 0; this.out.length = 0; this.snap = null; this.serverEvents.length = 0;
+    this.clearError();
+    this.waitSync = ++this._syncN;
+    this.send({ t: 'sync', n: this.waitSync });
+  }
 }
