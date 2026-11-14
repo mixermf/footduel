@@ -34,7 +34,7 @@ function createPlayer(side) {
     kick: null, kickBuf: 0, jumpBuf: 0, receiveT: 0, flick: false,
     lastTouchTick: -1000, lastKickTick: -1000,
     gesture: null, mode: 'run', yawVel: 0, dragSign: 0, lastTouchKind: null,
-    guard: false, lunge: null, lungeCd: 0, recvTick: -1000,
+    guard: false, lunge: null, lungeCd: 0, recvTick: -1000, juggle: null,
   };
 }
 
@@ -327,7 +327,7 @@ export class World {
     p.receiveT = Math.max(0, p.receiveT - dt);
     if (p.gesture) { p.gesture.t += dt; if (p.gesture.t > 0.35) p.gesture = null; }
     p.lungeCd = Math.max(0, p.lungeCd - dt);
-    if (!live) { p.kickBuf = p.jumpBuf = 0; p.guard = false; p.mode = input.sprintHeld ? 'sprint' : 'run'; return; }
+    if (!live) { p.kickBuf = p.jumpBuf = 0; p.guard = false; p.mode = input.sprintHeld ? 'sprint' : 'run'; if (p.juggle) this._endJuggle(p); return; }
 
     if (input.kickPressed && !p.kick) p.kickBuf = P.input.buffer;
     if (input.jumpPressed) p.jumpBuf = P.input.buffer;
@@ -338,7 +338,8 @@ export class World {
     if (p.kick) this._kickLogic(p, input);
 
     // защитная стойка — только без мяча и вне удара; с мячом та же кнопка ничего не меняет
-    p.guard = input.guardHeld && !p.possession && !p.kick && p.y <= 0;
+    p.guard = input.guardHeld && !p.possession && !p.kick && p.y <= 0 && !p.juggle;
+    if (p.juggle) this._juggle(p, input);
     if (p.guard) {
       p.mode = 'guard';
       const m = Math.hypot(input.mx, input.mz);
@@ -355,7 +356,15 @@ export class World {
     const kickWaiting = p.kick && (p.kick.phase === 'charge' || p.kick.phase === 'ready');
     if (p.jumpBuf > 0 && p.y <= 0 && (!p.kick || kickWaiting)) {
       p.jumpBuf = 0;
-      if (!p.kick && p.possession && this._ballDist(p) < P.player.legReach) {
+      const b = this.ball, since = (this.tick - p.lastTouchTick) * dt;
+      const popped = (p.lastTouchKind === 'flick' || p.lastTouchKind === 'juggle') && since < 1.3 && b.y > 0.25 && this._ballDist(p) < P.juggle.maxDist;
+      if (!p.kick && p.juggle) {
+        p.juggle.high = true; // во время чеканки прыжок — высокий подбив: под удар головой или через себя
+      } else if (!p.kick && popped) {
+        // мяч подброшен и ещё в воздухе: повторное нажатие начинает чеканку
+        p.juggle = { side: p.lastStrike ? -1 : 1, n: 0, high: false, swing: null, tc: 0, lx: b.x, lz: b.z };
+        this.events.push({ type: 'juggle_start' });
+      } else if (!p.kick && p.possession && this._ballDist(p) < P.player.legReach) {
         p.flick = true; // подброс: выполнит ближайшее реальное касание
       } else {
         p.vy = P.player.jumpSpeed; p.y = 1e-4;
@@ -366,9 +375,57 @@ export class World {
 
   _ballDist(p) { return Math.hypot(this.ball.x - p.x, this.ball.z - p.z); }
 
+  // Чеканка: мяч летает свободно; когда он опускается к высоте касания, стопа выходит под него и подбивает.
+  // Подбив нацелен в точку перед игроком с учётом его движения. Не достал — серия кончается, мяч падает сам.
+  _juggle(p, input) {
+    const P = this.P, J = P.juggle, b = this.ball, dt = this.dt, j = p.juggle, g = P.ball.gravity;
+    const foot = p.feet[j.side > 0 ? 1 : 0];
+    const onGround = b.y <= P.ball.radius + 0.03 && Math.abs(b.vy) < 1;
+    if (p.kick || p.y > 0 || input.sprintHeld || input.guardHeld || onGround || this._ballDist(p) > J.maxDist) { this._endJuggle(p); return; }
+    p.mode = 'control';
+    const hc = p.y + J.height;
+    // время до высоты касания на спуске и точка, где мяч её пересечёт
+    const disc = b.vy * b.vy + 2 * g * (b.y - hc);
+    j.tc = disc > 0 ? (b.vy + Math.sqrt(disc)) / g : 0;
+    j.lx = b.x + b.vx * j.tc; j.lz = b.z + b.vz * j.tc;
+    if (!j.swing && b.vy < 0.5 && j.tc <= J.lead && !foot.swing) {
+      j.swing = true;
+      foot.swing = null; foot.planted = false; foot.ctl = { jug: true };
+    }
+    if (!j.swing) return;
+    const rem = Math.max(j.tc, dt), a = Math.min(1, dt / rem);
+    foot.x += (j.lx - foot.x) * a; foot.z += (j.lz - foot.z) * a; foot.h += (hc - 0.1 - foot.h) * a; foot.yaw = p.yaw;
+    if (b.y > hc + 0.02 || b.vy > 0) return;
+    if (Math.hypot(foot.x - b.x, foot.z - b.z) > J.reach) {
+      this.events.push({ type: 'touch_miss', reason: 'чеканка: стопа не достала мяч' });
+      this._endJuggle(p);
+      return;
+    }
+    // подбив: вверх и к точке перед игроком, куда он придёт за время полёта; следующей работает другая нога
+    const vy = j.high ? J.highPop : J.pop, tf = 2 * vy / g;
+    const fx = Math.cos(p.yaw), fz = Math.sin(p.yaw), rx = -fz, rz = fx, next = -j.side;
+    let vx = (p.x + fx * J.front + rx * next * J.side + p.vx * tf * 0.9 - b.x) / tf;
+    let vz = (p.z + fz * J.front + rz * next * J.side + p.vz * tf * 0.9 - b.z) / tf;
+    const hv = Math.hypot(vx, vz); if (hv > 2.6) { vx *= 2.6 / hv; vz *= 2.6 / hv; }
+    b.vx = vx; b.vz = vz; b.vy = vy; b.wx = b.wy = b.wz = 0;
+    j.n++; j.high = false; j.swing = false; j.side = next;
+    p.lastTouchTick = this.tick; p.lastTouchKind = 'juggle';
+    foot.ctl = null; this._lift(foot, 0.18, 0.02, false);
+    this.stats.touches++;
+    this.events.push({ type: 'touch', kind: 'juggle', n: j.n, speed: vy });
+  }
+
+  _endJuggle(p) {
+    const j = p.juggle;
+    if (!j) return;
+    for (const f of p.feet) if (f.ctl && f.ctl.jug) { f.ctl = null; this._lift(f, 0.16, 0.02, false); }
+    if (j.n > 0) this.events.push({ type: 'juggle_end', n: j.n });
+    p.juggle = null;
+  }
+
   // ---------- план касания при владении ----------
   _touchPlan(p, input) {
-    if (!p.possession || p.kick || p.y > 0) return null;
+    if (!p.possession || p.kick || p.y > 0 || p.juggle) return null;
     const P = this.P, b = this.ball;
     if (p.flick) return { kind: 'flick', dx: Math.cos(p.yaw), dz: Math.sin(p.yaw), speed: 0, urgent: true };
     const mag = Math.hypot(input.mx, input.mz);
@@ -435,6 +492,8 @@ export class World {
     let dvx = 0, dvz = 0, rateScale = 1, faceYaw = null, faceBall = false, ov = null;
     const k = p.kick;
     const toBall = () => (Math.hypot(b.x - p.x, b.z - p.z) > 0.25 ? Math.atan2(b.z - p.z, b.x - p.x) : null);
+    // корпус при ударе — по линии удара; при ударе через себя — спиной к воротам
+    const kickYaw = () => (k.bike ? Math.atan2(-k.az, -k.ax) : Math.atan2(k.az, k.ax));
 
     if (p.lunge && !k) {
       // рывок: короткий мощный толчок в сторону, затем быстрое торможение; корпус остаётся лицом к мячу
@@ -444,6 +503,14 @@ export class World {
       else { if (L.t < G.lungeTime) L.t = G.lungeTime; ov = { a: G.brake, b: G.brake }; }
       faceYaw = toBall();
       if (L.t >= G.lungeTime + G.lungeRecover) { p.lunge = null; p.lungeCd = G.lungeCooldown; }
+    } else if (p.juggle && !k) {
+      // чеканка: медленное движение по команде плюс подстройка под точку, куда опускается мяч
+      const J = P.juggle, j = p.juggle, fx = Math.cos(p.yaw), fz = Math.sin(p.yaw);
+      dvx = ix * J.speed * mag; dvz = iz * J.speed * mag;
+      const ex = j.lx - fx * J.front + fz * j.side * J.side - p.x, ez = j.lz - fz * J.front - fx * j.side * J.side - p.z, el = Math.hypot(ex, ez);
+      if (el > 0.03) { const sp = Math.min(1.6, el * 6); dvx += (ex / el) * sp; dvz += (ez / el) * sp; }
+      if (mag > 0.05) faceYaw = Math.atan2(iz, ix);
+      rateScale = 1.2;
     } else if (p.guard) {
       // стойка: приставной шаг в любую сторону, корпус всегда развёрнут к мячу
       const G = P.guard;
@@ -462,10 +529,11 @@ export class World {
       const tl = k.phase === 'windup' ? k.windDur - k.t + P.kick.strikeSwing : k.plan.t;
       const sp = Math.min(P.kick.strikeSpeed, el / Math.max(tl - 0.03, 0.04));
       if (el > 0.02) { dvx = (ex / el) * sp; dvz = (ez / el) * sp; }
-      faceYaw = Math.atan2(k.az, k.ax);
+      k.bike = !!k.plan.bike;
+      faceYaw = kickYaw();
       rateScale = 1.6;
     } else if (k && k.dyn) {
-      dvx = p.vx; dvz = p.vz; faceYaw = Math.atan2(k.az, k.ax); // удар с хода: инерция сохраняется
+      dvx = p.vx; dvz = p.vz; faceYaw = kickYaw(); // удар с хода: инерция сохраняется
     } else if (k && (k.phase === 'charge' || k.phase === 'ready')) {
       // автоматическая подстройка под удар; направления управляют прицелом, а не движением
       const ax = k.ax, az = k.az, rx = -az, rz = ax;
@@ -489,7 +557,7 @@ export class World {
       faceYaw = Math.atan2(az, ax);
       rateScale = 1.2;
     } else if (k) {
-      rateScale = 0.6; faceYaw = Math.atan2(k.az, k.ax); // замах/контакт/окно подкрутки: короткая опорная фаза
+      rateScale = 0.6; faceYaw = kickYaw(); // замах/контакт/окно подкрутки: короткая опорная фаза
     } else if (p.possession && p.y <= 0) {
       const relx = b.x - p.x, relz = b.z - p.z, dist = Math.hypot(relx, relz);
       rateScale = PP.ballAccelFactor;
@@ -698,8 +766,12 @@ export class World {
         // пивот: опорная стопа доворачивается на носке, если корпус ушёл дальше анатомического предела
         const ye = angDiff(p.yaw, f.yaw);
         if (Math.abs(ye) > 0.75) f.yaw += ye - Math.sign(ye) * 0.75;
-        if (kicking) continue; // опорная нога удара стоит
         const dHip = Math.hypot(f.x - p.x, f.z - p.z);
+        // опора не может остаться далеко от таза: нога не резиновая. Удар с хода, выход из удара, резкая остановка —
+        // стопа переставляется коротким подшагом под корпус (в ударе с хода получается подскок на опорной ноге)
+        const tight = kicking || p.lunge;
+        if (dHip > (tight ? 0.5 : 0.58) && (!o.swing || dHip > 0.85)) { this._lift(f, tight ? 0.09 : 0.11, 0.04, false); continue; }
+        if (kicking) continue; // опорная нога удара стоит, пока корпус над ней
         // внеочередной шаг к мячу — только с двух опор: никаких прыжков на обеих ногах
         const oLanding = o.swing && o.swing.gait && !o.swing.armed && o.swing.dur - o.swing.t < 0.09; // вторая нога уже почти на покрытии
         const urgentNow = plan && plan.urgent && (!o.swing || oLanding) && !o.ctl && b.y < 0.3
@@ -772,9 +844,10 @@ export class World {
       ax, az, gx, aimLat: 0, aimHigh: 0,
       footSide: lat > -0.05 ? 1 : -1,
       e1: this.rng.signed(), e2: this.rng.signed(), // случайность — один раз на попытку
-      startYaw: p.yaw, curlIn: 0, curlN: 0, hit: false, plan: null, dynamic: false, dyn: false, high: false, jumped: false, commitTick: 0,
+      startYaw: p.yaw, curlIn: 0, curlN: 0, hit: false, plan: null, dynamic: false, dyn: false, high: false, jumped: false, commitTick: 0, bike: false,
     };
     p.flick = false; p.lunge = null; p.guard = false;
+    if (p.juggle) this._endJuggle(p);
     this.events.push({ type: 'kick_start' });
   }
 
@@ -807,22 +880,23 @@ export class World {
       if (k.plan) {
         const pl = k.plan;
         if (pl.jump && p.y <= 0 && pl.jumpAt <= dt) {
-          p.vy = pl.jump; p.y = 1e-4; k.jumped = true; k.commitTick = this.tick + Math.round(pl.t / dt);
+          p.vy = pl.jump; p.y = 1e-4; k.jumped = true; k.commitTick = this.tick + Math.round(pl.t / dt); k.bike = !!pl.bike;
           this.events.push({ type: 'jump', strike: true });
         }
         if (pl.t <= K.strikeWindup + K.strikeSwing) {
           const rx = -k.az, rz = k.ax;
-          k.phase = 'windup'; k.t = 0; k.dyn = true; k.offset = 0; k.high = pl.high;
+          k.phase = 'windup'; k.t = 0; k.dyn = true; k.offset = 0; k.high = pl.high; k.bike = !!pl.bike;
           k.windDur = Math.max(0.04, pl.t - K.strikeSwing);
           const foot = p.feet[k.footSide > 0 ? 1 : 0];
           foot.swing = null; foot.planted = false;
           // замах: низкий мяч — нога назад; мяч на весу — нога отводится в сторону и вверх
           // занос: низкий мяч — стопа уходит назад с согнутым коленом; мяч на весу — нога отводится назад-в сторону
           // и поднимается почти до высоты будущего контакта, чтобы пронос шёл по дуге, а не снизу вверх
-          const back = pl.high ? 0.34 : 0.4, out = pl.high ? 0.3 : 0.13;
+          // через себя: колено подтянуто перед корпусом, дальше стопа идёт вверх к мячу
+          const back = pl.bike ? 0.24 : pl.high ? 0.34 : 0.4, out = pl.bike ? 0.1 : pl.high ? 0.3 : 0.13;
           foot.ctl = {
             tx: p.x - k.ax * back + rx * k.footSide * out, tz: p.z - k.az * back + rz * k.footSide * out,
-            th: p.y + (pl.high ? Math.max(0.35, pl.hRel * 0.85) : 0.26 + 0.14 * k.charge), remain: k.windDur, rel: true, ease: true, t0: k.windDur,
+            th: p.y + (pl.bike ? 0.4 : pl.high ? Math.max(0.35, pl.hRel * 0.85) : 0.26 + 0.14 * k.charge), remain: k.windDur, rel: true, ease: true, t0: k.windDur,
           };
           this.events.push({ type: 'kick_windup', charge: k.charge, dynamic: true, high: pl.high, jump: p.y > 0 });
         }
@@ -902,7 +976,7 @@ export class World {
       const t = (k.commitTick - this.tick) * this.dt;
       if (t <= 0) { k.commitTick = 0; return null; }
       const q = this._predictBall(t), py = Math.max(0, p.y + p.vy * t - 0.5 * g * t * t), hRel = q.y - py;
-      return { t, sx: p.x + p.vx * t, sz: p.z + p.vz * t, bx: q.x, by: q.y, bz: q.z, hRel, high: hRel > 0.35, jump: 0, jumpAt: 0 };
+      return { t, sx: p.x + p.vx * t, sz: p.z + p.vz * t, bx: q.x, by: q.y, bz: q.z, hRel, high: hRel > 0.35, jump: 0, jumpAt: 0, bike: k.bike };
     }
     const c = Object.assign(this._pred || (this._pred = {}), b);
     const ev = this._predEv || (this._predEv = []);
@@ -910,11 +984,29 @@ export class World {
     const rx = -k.az, rz = k.ax, air = p.y > 0;
     const R = PP.radius, minX = p.side < 0 ? -F.length / 2 + R : R + 0.05, maxX = p.side < 0 ? -R - 0.05 : F.length / 2 - R, maxZ = F.width / 2 - R;
     let best = null, bestCost = 1e9;
+    // игрок спиной к воротам: мяч в воздухе рядом можно пробить через себя, не разворачиваясь
+    const backToGoal = !air && Math.cos(p.yaw) * k.ax + Math.sin(p.yaw) * k.az < -0.3;
     for (let i = 1; i <= n; i++) {
       stepBall(c, h, P, ev, null); ev.length = 0;
       const t = i * h;
       if (t < 0.1) continue;
       if (t > bestCost) break;
+      if (backToGoal && c.y >= K.bikeMin && t >= 0.16) {
+        const pyB = Math.max(K.bikeHop, c.y - K.bikeReach);
+        const vyB = Math.sqrt(2 * g * pyB), tUp = vyB / g;
+        const jump = t >= tUp ? vyB : (pyB + 0.5 * g * t * t) / t, jumpAt = t >= tUp ? t - tUp : 0;
+        // тело — чуть ближе к воротам, чем мяч: стопа приходит к мячу снизу-спереди и отправляет его назад через голову
+        const sx0 = c.x + k.ax * 0.12, sz0 = c.z + k.az * 0.12;
+        const sx = clamp(sx0, minX, maxX), sz = clamp(sz0, -maxZ, maxZ);
+        const reachOk = jumpAt < 0.1
+          ? Math.hypot(sx - (p.x + p.vx * t), sz - (p.z + p.vz * t)) <= 0.3
+          : Math.hypot(sx - p.x, sz - p.z) <= 0.15 + K.strikeSpeed * Math.max(0, t - 0.04);
+        if (pyB <= K.jumpReach && jump <= K.strikeJumpMax && Math.hypot(sx - sx0, sz - sz0) <= 0.12 && reachOk) {
+          const cost = t - 0.12; // через себя быстрее, чем разворачиваться к воротам
+          if (cost < bestCost) { bestCost = cost; best = { t, sx, sz, bx: c.x, by: c.y, bz: c.z, hRel: c.y - pyB, high: true, jump, jumpAt, bike: true }; }
+          continue;
+        }
+      }
       let py = air ? Math.max(0, p.y + p.vy * t - 0.5 * g * t * t) : 0, jump = 0, jumpAt = 0;
       let hRel = c.y - py;
       if (hRel > K.standReach) {
@@ -950,8 +1042,9 @@ export class World {
           if (Math.hypot(sx - (p.x + p.vx * t), sz - (p.z + p.vz * t)) > 0.25) continue;
         } else if (Math.hypot(sx - p.x, sz - p.z) > 0.15 + K.strikeSpeed * Math.max(0, t - 0.04)) continue;
       }
-      const cost = t + (jump ? 0.06 : 0); // прыжок — почти наравне с ожиданием: эффектный удар раньше, чем мяч опустится
-      if (cost < bestCost) { bestCost = cost; best = { t, sx, sz, bx: c.x, by: c.y, bz: c.z, hRel, high, jump, jumpAt }; }
+      // прыжок — почти наравне с ожиданием: эффектный удар раньше, чем мяч опустится; спиной к воротам обычный удар требует разворота
+      const cost = t + (jump ? 0.06 : 0) + (backToGoal ? 0.3 : 0);
+      if (cost < bestCost) { bestCost = cost; best = { t, sx, sz, bx: c.x, by: c.y, bz: c.z, hRel, high, jump, jumpAt, bike: false }; }
     }
     if (best) {
       // нога — с той стороны, где окажется мяч; без дёрганья при малой разнице
@@ -1016,6 +1109,7 @@ export class World {
     const volley = b.y > 0.35, jumpKick = p.y > 0.05;
     let speed = lerp(K.minSpeed, K.maxSpeed, k.dyn ? Math.max(k.charge, K.volleyMinCharge) : k.charge);
     if (k.dyn) speed = Math.min(K.maxSpeed + K.volleyOverMax, speed + K.volleyBonus * incoming); // встречный мяч добавляет силы
+    if (k.bike) speed *= K.bikeBonus;
     const tz = k.aimLat * (F.goalWidth / 2) * K.aimWidth;
     let dx = k.gx - b.x, dz = tz - b.z;
     let yaw = Math.atan2(dz, dx);
@@ -1026,9 +1120,9 @@ export class World {
       pitch = clamp(Math.atan2(yT - b.y + 0.5 * P.ball.gravity * tf * tf, d) * 180 / Math.PI, -25, 40);
     } else pitch = k.aimHigh < 0 ? lerp(K.pitchMid, K.pitchLow, -k.aimHigh) : lerp(K.pitchMid, K.pitchHigh, k.aimHigh);
     const pSpeed = Math.hypot(p.vx, p.vz);
-    const turn = Math.abs(angDiff(Math.atan2(k.az, k.ax), k.startYaw)) / Math.PI;
+    const turn = k.bike ? 0 : Math.abs(angDiff(Math.atan2(k.az, k.ax), k.startYaw)) / Math.PI;
     const sigma = K.errBase + K.errSpeed * pSpeed + K.errTurn * turn + K.errCharge * k.charge + K.errOffset * (k.offset || 0)
-      + (k.dyn ? K.errVolley + K.errIncoming * incoming : 0);
+      + (k.dyn ? K.errVolley + K.errIncoming * incoming : 0) + (k.bike ? K.errBike : 0);
     const errYaw = k.e1 * sigma, errPitch = k.e2 * sigma * 0.6;
     yaw += (errYaw * Math.PI) / 180;
     pitch = (volley ? pitch + errPitch : Math.max(0, pitch + errPitch)) * Math.PI / 180;
@@ -1047,7 +1141,7 @@ export class World {
     this.events.push({
       type: 'kick', charge: k.charge, speed, aimLat: k.aimLat, aimHigh: k.aimHigh,
       error: { sigma, yaw: errYaw, pitch: errPitch, playerSpeed: pSpeed, turn, offset: k.offset || 0 },
-      volley, jump: jumpKick, firstTime: !!k.dyn, incoming,
+      volley, jump: jumpKick, firstTime: !!k.dyn, incoming, bike: !!k.bike,
     });
   }
 
@@ -1073,6 +1167,7 @@ export class World {
     const since = (this.tick - p.lastTouchTick) * this.dt;
     if (since < 0.25) return;
     if (p.kick && p.kick.dyn && (p.kick.phase === 'windup' || p.kick.phase === 'swing')) return; // мяч встречает стопа, а не корпус
+    if (p.juggle && b.y - p.y < 1.0) return; // чеканка: мячом работают стопы, корпус его не отбивает
     if (d < 1e-6) { nx = Math.cos(p.yaw); nz = Math.sin(p.yaw); ny = 0; } else { nx /= d; ny /= d; nz /= d; }
     const rvx = b.vx - p.vx, rvy = b.vy - p.vy, rvz = b.vz - p.vz;
     const vn = -(rvx * nx + rvy * ny + rvz * nz);
@@ -1109,6 +1204,19 @@ export class World {
       this.events.push({ type: 'receive', zone, quality: q, speed: vn, guard: guarding });
       return;
     }
+    if (zone === 'foot' && p.y <= 0 && !p.kick && nx * fx + nz * fz > -0.25) {
+      // игрок повёрнут к мячу: медленный мяч останавливает, быстрый принимает на щёчку — он отскакивает недалеко
+      const A = P.receive, stop = vn <= A.autoStop;
+      const out = stop ? 0.25 : Math.min(A.cushionMax, A.cushionBase + A.cushionGain * (vn - A.autoStop));
+      b.vx = p.vx * 0.6 + nx * out; b.vz = p.vz * 0.6 + nz * out; b.vy = stop ? 0 : 0.5;
+      b.wx = b.wy = b.wz = 0;
+      const lat = (b.x - p.x) * -fz + (b.z - p.z) * fx;
+      p.gesture = { type: stop ? 'foot' : 'cushion', t: 0, foot: lat >= 0 ? 1 : 0 };
+      p.lastTouchTick = this.tick - Math.round(0.15 / this.dt); p.recvTick = this.tick;
+      this.stats.receives++;
+      this.events.push({ type: 'receive', zone, quality: stop ? 0.8 : 0.4, speed: vn, auto: stop ? 'stop' : 'cushion' });
+      return;
+    }
     if (zone === 'head' && p.y > 0.05) {
       // игра головой в прыжке: направление по корпусу
       const out = 5 + vn * 0.35;
@@ -1132,6 +1240,7 @@ export class World {
     const dist = this._ballDist(p);
     const rel = Math.hypot(b.vx - p.vx, b.vz - p.vz);
     const was = p.possession;
+    if (p.juggle) { p.possession = false; return; } // мяч в воздухе под контролем чеканки: наземное владение не считается
     const recent = (this.tick - p.lastTouchTick) * dt < 0.3;
     p.possession = this.phase === 'play' && b.y < 0.4 && Math.abs(b.vy) < 2 && dist < D.possessionRange && (rel < D.possessionRelSpeed || recent)
       && (this.tick - p.lastKickTick) * dt > 0.35 && b.x * p.side > -0.4;

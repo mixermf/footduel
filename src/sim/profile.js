@@ -46,6 +46,8 @@ export function createProfile() {
       standReach: 0.8, jumpReach: 1.1, strikeSwing: 0.09, strikeWindup: 0.21, // время проноса стопы к мячу и замаха, с
       legMin: 0.5, legMax: 0.84, legIdeal: 0.74, // допустимое расстояние таз — голеностоп для бьющей ноги, м
       strikeJumpMax: 4.3, // досягаемость стопы стоя, запас прыжка, предел толчка
+      // удар через себя: игрок спиной к воротам, мяч в воздухе рядом
+      bikeMin: 0.95, bikeReach: 1.45, bikeHop: 0.18, bikeBonus: 1.08, errBike: 1.2,
       volleyBonus: 0.3, volleyMinCharge: 0.3, volleyOverMax: 4, // вклад встречной скорости мяча, минимальный заряд, запас сверх maxSpeed
       errVolley: 0.8, errIncoming: 0.06,
       aimRateDigital: 4.5, aimRateAnalog: 14,
@@ -60,7 +62,17 @@ export function createProfile() {
       lungeSpeed: 6.4, lungeTime: 0.17, lungeRecover: 0.2, lungeCooldown: 0.4, // рывок: скорость, длительность, выход, пауза
       lungeAccel: 70,
     },
-    receive: { window: 0.18, idealFrom: 0.03, idealTo: 0.12, passiveRestitution: 0.45 },
+    receive: {
+      window: 0.18, idealFrom: 0.03, idealTo: 0.12, passiveRestitution: 0.45,
+      // низовой мяч, попавший в стопы игрока, который к нему повёрнут: до autoStop м/с — остановка, быстрее — подставленная щёчка
+      autoStop: 9, cushionBase: 1.0, cushionGain: 0.25, cushionMax: 4.5,
+    },
+    // чеканка: после подброса повторный прыжок включает серию касаний; мяч подбивается к точке перед игроком
+    juggle: {
+      height: 0.32, lead: 0.14, reach: 0.26, // высота касания над опорой, м; за сколько секунд нога идёт к мячу; допуск по горизонтали, м
+      pop: 2.7, highPop: 5.5, // вертикальная скорость обычного и высокого подбива, м/с
+      front: 0.36, side: 0.09, speed: 1.3, maxDist: 1.35,
+    },
     input: { buffer: 0.1, deadzone: 0.15 },
     match: { goalPause: 1.3, goalsToWin: 7, idleRestart: 6 }, // idleRestart: дуэль — мяч, замерший без владения, вводится заново, с
   };

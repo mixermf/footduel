@@ -46,7 +46,7 @@ export class Hud {
     const charge = k ? k.charge : 0;
     this.charge.querySelector('b').style.width = Math.round(charge * 100) + '%';
     this.charge.querySelector('[data-v]').textContent = k ? Math.round(charge * 100) + '%' : '';
-    const mode = p.lunge ? 'Рывок' : p.mode === 'guard' ? 'Защитная стойка' : p.mode === 'sprint' ? 'Спринт' : p.mode === 'control' ? 'Близкий контроль' : 'Бег';
+    const mode = p.juggle ? 'Чеканка' + (p.juggle.n ? ' ×' + p.juggle.n : '') : p.lunge ? 'Рывок' : p.mode === 'guard' ? 'Защитная стойка' : p.mode === 'sprint' ? 'Спринт' : p.mode === 'control' ? 'Близкий контроль' : 'Бег';
     const phase = !k ? (p.possession ? 'мяч под контролем' : 'без мяча')
       : k.plan ? 'выход на мяч — удар в касание'
         : k.phase === 'charge' ? 'заряд — направления управляют прицелом'

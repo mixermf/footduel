@@ -38,7 +38,7 @@ const game = {
   replay: null, fps: 60, lab: null, serveIndex: 0,
 };
 window.__game = LAB_ENABLED ? game : undefined;
-game.version = '0.3.0';
+game.version = '0.4.0';
 
 const { input, scene, rig, rig2, hud, sfx } = game;
 let world = sandbox;
@@ -106,7 +106,9 @@ game.exportLog = () => {
 const CONTROLS = [
   ['Движение / прицел в окне удара', 'WASD, стрелки', 'левый стик, крестовина'],
   ['Заряд и удар при отпускании', 'J', 'X / □'],
-  ['Прыжок; при владении — подброс', 'Пробел', 'Y / △'],
+  ['Прыжок; при владении — подброс; ещё раз, пока мяч в воздухе, — чеканка', 'Пробел', 'Y / △'],
+  ['В чеканке: удар с лёта; высокий подбив; движение', 'J; Пробел; WASD', 'X / □; Y / △; стик'],
+  ['Удар через себя: спиной к воротам по мячу в воздухе', 'J', 'X / □'],
   ['Точный приём; удержание — близкий контроль', 'E', 'A / × ; RT / R2'],
   ['Разворот к воротам и контроль', 'Q', 'LT / L2'],
   ['Спринт', 'C', 'RB / R1'],
@@ -249,12 +251,17 @@ function handleEvents(events, me = 0, accept = null) {
         scene.setReboundWall(e.on);
         hud.showToast(e.on ? 'Щит вместо ворот: мяч возвращается' : 'Ворота открыты', { ms: 800 });
         break;
-      case 'touch': sfx.play('touch'); scene.contactFlash(b.x, 0.02, b.z, 0); break;
+      case 'touch':
+        sfx.play('touch'); scene.contactFlash(b.x, e.kind === 'juggle' ? b.y : 0.02, b.z, 0);
+        if (e.kind === 'juggle' && mine && e.n >= 3) hud.showToast('Чеканка ×' + e.n, { ms: 500 });
+        break;
+      case 'juggle_start': if (mine) hud.showToast('Чеканка: удар — с лёта, прыжок — подбить выше', { ms: 1200 }); break;
       case 'kick':
         sfx.play('kick', Math.min(1, e.speed / 24)); scene.contactFlash(b.x, b.y, b.z, 0.6 + e.charge + (e.firstTime ? 0.5 : 0));
         scene.shake = 0.03 + 0.09 * Math.min(1, e.speed / 24);
         if (!mine) break;
-        if (e.jump) hud.showToast('Удар в прыжке!', { ms: 600 });
+        if (e.bike) hud.showToast('Через себя!', { big: true, ms: 800 });
+        else if (e.jump) hud.showToast('Удар в прыжке!', { ms: 600 });
         else if (e.volley) hud.showToast('С лёта!', { ms: 500 });
         else if (e.firstTime) hud.showToast('В касание!', { ms: 450 });
         if (game.settings.vibration) input.rumble(0.3 + 0.6 * e.charge, 90);
@@ -262,7 +269,7 @@ function handleEvents(events, me = 0, accept = null) {
       case 'receive':
         sfx.play(e.quality >= 1 ? 'receive' : 'receive_bad');
         if (!mine) break;
-        hud.showToast(e.quality >= 1 ? 'Точный приём' : e.guard ? 'Приём в стойке' : 'Неполный приём', { ms: 600 });
+        hud.showToast(e.quality >= 1 ? 'Точный приём' : e.guard ? 'Приём в стойке' : e.auto === 'stop' ? 'Остановил' : e.auto === 'cushion' ? 'Принял на щёчку' : 'Неполный приём', { ms: 600 });
         if (game.settings.vibration) input.rumble(0.25, 60);
         break;
       case 'header': sfx.play('body', 0.6); if (mine) hud.showToast('Игра головой', { ms: 500 }); break;

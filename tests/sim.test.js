@@ -465,3 +465,118 @@ test('приём в стойке: сильный удар гасится тел�
   assert.ok(lunge.maxAway < 2.2, 'после рывка мяч рядом: ' + lunge.maxAway.toFixed(2));
   assert.ok(miss.rec);
 });
+
+// ---------- чеканка, удар через себя, остановка низового мяча, опорная нога
+test('чеканка: подброс, повторный прыжок — серия касаний; движение с мячом в воздухе; удар с лёта из чеканки', () => {
+  const w = new World(createProfile(), { seed: 7 });
+  w.reset('free');
+  const p = w.player, b = w.ball;
+  let touches = 0, kick = null, maxD = 0, started = false;
+  for (let i = 0; i < 780; i++) {
+    const t = i / 120;
+    w.step(inp({ jumpPressed: i === 10 || i === 60, mz: t > 2.5 && t < 4.5 ? 1 : 0, kickHeld: t > 6 && t < 6.3, kickPressed: i === 721 }));
+    for (const e of w.events) {
+      if (e.type === 'juggle_start') started = true;
+      if (e.type === 'touch' && e.kind === 'juggle') touches++;
+      if (e.type === 'kick') kick = e;
+      assert.notEqual(e.type, 'body', 'в чеканке мяч не отскакивает от корпуса');
+    }
+    if (p.juggle) { maxD = Math.max(maxD, Math.hypot(b.x - p.x, b.z - p.z)); assert.equal(p.possession, false); }
+    if (t > 1 && t < 6) assert.ok(p.juggle, 'серия не прерывается сама, t=' + t.toFixed(2));
+  }
+  assert.ok(started);
+  assert.ok(touches >= 8, 'касаний в серии: ' + touches);
+  assert.ok(maxD < 0.9, 'мяч остаётся у ног: ' + maxD.toFixed(2));
+  assert.ok(p.z > 0.5, 'игрок прошёл с мячом в воздухе: ' + p.z.toFixed(2));
+  assert.ok(kick && kick.volley && kick.firstTime, 'из чеканки удар идёт с лёта');
+  assert.equal(p.juggle, null);
+});
+
+test('чеканка кончается честно: спринт бросает серию, мяч падает сам', () => {
+  const w = new World(createProfile(), { seed: 7 });
+  w.reset('free');
+  const p = w.player;
+  for (let i = 0; i < 200; i++) w.step(inp({ jumpPressed: i === 10 || i === 60 }));
+  assert.ok(p.juggle && p.juggle.n >= 1);
+  for (let i = 0; i < 30; i++) w.step(inp({ sprintHeld: true, mx: -1 }));
+  assert.equal(p.juggle, null);
+});
+
+test('удар через себя: спиной к воротам по мячу в воздухе — без разворота, в прыжке, мяч летит к воротам', () => {
+  for (const [h, dx] of [[2.2, -0.3], [2.6, 0.2]]) {
+    const w = new World(createProfile(), { seed: 7 });
+    w.reset('motor');
+    const p = w.player, b = w.ball;
+    for (let i = 0; i < 90; i++) w.step(inp({ mx: -1 }));
+    for (let i = 0; i < 60; i++) w.step(inp());
+    assert.ok(Math.abs(Math.abs(p.yaw) - Math.PI) < 0.2, 'игрок стоит спиной к правым воротам');
+    b.x = p.x + dx; b.z = p.z + 0.05; b.y = h; b.vx = b.vz = b.vy = 0;
+    let kick = null, yawAtKick = 0, pyAtKick = 0, maxLeg = 0, minLeg = 9;
+    for (let i = 0; i < 200; i++) {
+      w.step(inp({ kickHeld: i < 40, kickPressed: i === 0 }));
+      const k = p.kick;
+      if (k && k.dyn && (k.phase === 'windup' || k.phase === 'swing')) {
+        const f = p.feet[k.footSide > 0 ? 1 : 0], rx = -Math.sin(p.yaw), rz = Math.cos(p.yaw);
+        const L = Math.hypot(f.x - (p.x + rx * k.footSide * 0.09), f.h + 0.1 - (p.y + 0.9), f.z - (p.z + rz * k.footSide * 0.09));
+        maxLeg = Math.max(maxLeg, L); minLeg = Math.min(minLeg, L);
+      }
+      for (const e of w.events) if (e.type === 'kick') { kick = e; yawAtKick = p.yaw; pyAtKick = p.y; assert.ok(b.vx > 8, 'мяч летит к воротам: ' + b.vx.toFixed(1)); }
+    }
+    assert.ok(kick && kick.bike, 'удар через себя состоялся');
+    assert.ok(Math.abs(Math.abs(yawAtKick) - Math.PI) < 0.35, 'корпус остался спиной к воротам');
+    assert.ok(pyAtKick > 0.15, 'удар в прыжке');
+    assert.ok(maxLeg <= w.P.kick.legMax + 0.01 && minLeg >= w.P.kick.legMin - 0.01, `нога в анатомических пределах: ${minLeg.toFixed(2)}–${maxLeg.toFixed(2)}`);
+  }
+});
+
+test('низовой мяч в ноги без нажатий: до 9 м/с — остановка, быстрее — щёчка; мяч остаётся рядом', () => {
+  const run = (v, turnAway) => {
+    const w = new World(createProfile(), { seed: 7 });
+    w.reset('motor');
+    const p = w.player, b = w.ball;
+    for (let i = 0; i < 30; i++) w.step(inp(turnAway ? { mx: -1 } : {}));
+    for (let i = 0; i < 40; i++) w.step(inp());
+    b.x = p.x + 5; b.z = p.z + 0.04; b.y = 0.11; b.vx = -v; b.vz = 0; b.vy = 0;
+    let rec = null, body = false, maxAway = 0;
+    for (let i = 0; i < 300; i++) {
+      w.step(inp());
+      for (const e of w.events) { if (e.type === 'receive') rec = e; if (e.type === 'body') body = true; }
+      if (rec || body) maxAway = Math.max(maxAway, Math.hypot(b.x - p.x, b.z - p.z));
+    }
+    return { rec, body, maxAway, poss: p.possession, gesture: rec };
+  };
+  const a = run(8);
+  assert.equal(a.rec.auto, 'stop');
+  assert.ok(a.maxAway < 0.6 && a.poss);
+  for (const v of [12, 18]) {
+    const c = run(v);
+    assert.equal(c.rec.auto, 'cushion');
+    assert.ok(c.maxAway < 1.2, `${v} м/с: мяч отскочил недалеко (${c.maxAway.toFixed(2)} м)`);
+    assert.ok(c.maxAway > a.maxAway, 'сильный мяч отскакивает дальше остановленного');
+  }
+  const back = run(14, true);
+  assert.ok(back.body && !back.rec, 'спиной к мячу приёма нет — обычный отскок');
+});
+
+test('опорная нога не остаётся позади корпуса: удар с хода, выход из удара, остановка со спринта', () => {
+  const far = (w) => Math.max(...w.player.feet.filter((f) => f.planted && !f.ctl).map((f) => Math.hypot(f.x - w.player.x, f.z - w.player.z)), 0);
+  for (const sc of ['low', 'thigh', 'wall']) {
+    const w = new World(createProfile(), { seed: 7 });
+    w.reset(sc);
+    let worst = 0;
+    for (let i = 0; i < 300; i++) {
+      w.step(inp({ kickHeld: i > 16 && i < 140, kickPressed: i === 17, mx: i < 16 ? 1 : 0 }));
+      worst = Math.max(worst, far(w));
+    }
+    assert.ok(worst < 0.75, `${sc}: опора не дальше 0,75 м от таза (было до 1,8 м): ${worst.toFixed(2)}`);
+  }
+  const w = new World(createProfile(), { seed: 7 });
+  w.reset('motor');
+  let worst = 0;
+  for (let i = 0; i < 600; i++) {
+    const ph = Math.floor(i / 100) % 4;
+    w.step(inp({ sprintHeld: true, mx: [1, -1, 0, 0][ph], mz: [0, 0, 1, -1][ph] }));
+    worst = Math.max(worst, far(w));
+  }
+  assert.ok(worst < 0.75, 'спринт с разворотами: ' + worst.toFixed(2));
+});
