@@ -8,6 +8,7 @@ export const STARVE_TICKS = 30; // столько шагов без ввода �
 export const INPUT_MASK = 0x3ff | 8192; // биты действий игрока (8192 — защитная стойка); команды песочницы по сети не передаются
 export const EDGE_BITS = 4 | 8 | 16 | 256 | 512; // события нажатия: при повторе ввода не дублируются
 
+export const REMOTE_DELAY = 8; // соперник показывается с отставанием на столько шагов (67 мс) от последнего состояния сервера
 export const COUNTDOWN_MS = 3000;
 export const RESUME_MS = 2000;
 export const REJOIN_MS = 30000;

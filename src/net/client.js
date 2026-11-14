@@ -18,6 +18,8 @@ export class NetClient {
     this.url = url;
     this.session = new NetSession(world, (o) => this._send(o));
     this.ws = null; this.status = 'idle'; // idle | connecting | open | reconnecting | failed | closed
+    const q = new URLSearchParams(location.search), lab = import.meta.env.DEV || import.meta.env.MODE === 'lab';
+    this.lag = lab ? Number(q.get('lag')) || 0 : 0; this.jitter = lab ? Number(q.get('jitter')) || 0 : 0; this._lagAt = { up: 0, down: 0 };
     this.first = null; this.done = false; this.retryUntil = 0; this._pingAt = 0; this._timer = 0;
   }
 
@@ -35,7 +37,20 @@ export class NetClient {
     this.status = 'closed';
   }
 
-  _send(o) { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(o)); }
+  _send(o) {
+    const ws = this.ws;
+    if (!ws || ws.readyState !== 1) return;
+    const str = JSON.stringify(o);
+    if (this.lag) this._delay(() => { if (ws.readyState === 1) ws.send(str); }, 'up'); else ws.send(str);
+  }
+
+  // Искусственная задержка сети для проверки (?lag=мс&jitter=мс, только сборка с лабораторией): порядок сообщений сохраняется
+  _delay(fn, dir) {
+    const now = performance.now();
+    const at = Math.max(this._lagAt[dir], now + this.lag / 2 + Math.random() * this.jitter);
+    this._lagAt[dir] = at;
+    setTimeout(fn, at - now);
+  }
 
   _open() {
     const s = this.session;
@@ -48,7 +63,7 @@ export class NetClient {
       if (s.token) { s.resetInput(); this._send({ t: 'rejoin', v: NET_VERSION, code: s.code, token: s.token, seq: s.seq }); }
       else this._send(this.first);
     };
-    ws.onmessage = (e) => {
+    const receive = (e) => {
       if (this.ws !== ws) return;
       // накопившиеся состояния до подтверждения синхронизации даже не разбираются
       if (s.waitSync && typeof e.data === 'string' && e.data.startsWith('{"t":"s"')) return;
@@ -64,6 +79,7 @@ export class NetClient {
       }
       s.handle(m, performance.now());
     };
+    ws.onmessage = this.lag ? (e) => this._delay(() => receive(e), 'down') : receive;
     ws.onclose = () => {
       if (this.ws !== ws) return;
       this.ws = null;

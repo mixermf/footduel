@@ -286,3 +286,23 @@ test('возврат после скрытого окна: сервер не к�
   assert.ok(r.room.world.players[1].vz < -1, 'после возврата ввод снова доходит');
   for (let j = 0; j < 2; j++) assert.ok(Math.abs(c.world.players[j].x - r.room.world.players[j].x) < 0.5);
 });
+
+test('соперник показывается по подтверждённым состояниям сервера: плавно и без поправок-скачков', () => {
+  const r = rig({ delay: 12, jitter: 3 }); // около 200 мс пинга
+  startMatch(r);
+  const c = r.clients[0], view = {};
+  let maxStep = 0, last = null, n = 0;
+  // соперник мечется из стороны в сторону: угадать его на 200 мс вперёд нельзя
+  const script = (t) => [inp(), inp({ mz: Math.floor(t / 45) % 2 ? 1 : -1, sprintHeld: true })];
+  for (let i = 0; i < 900; i++) {
+    r.pump(1, script);
+    if (i % 2 === 0 && c.net.remoteView(view, 1 / 60)) {
+      if (last !== null && i > 200) { maxStep = Math.max(maxStep, Math.abs(view.pz - last)); n++; }
+      last = view.pz;
+    }
+  }
+  assert.ok(n > 300);
+  assert.ok(maxStep < 0.11, 'показанный соперник за кадр смещается не больше хода на скорости спринта: ' + maxStep.toFixed(3) + ' м');
+  const srv = r.room.world.players[1];
+  assert.ok(Math.abs(view.pz - srv.z) < 1.6, 'показанное положение — недавнее положение сервера');
+});

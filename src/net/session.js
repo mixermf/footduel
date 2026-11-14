@@ -2,9 +2,10 @@
 // Свой игрок предсказывается сразу; каждое состояние сервера восстанавливается целиком, и поверх него
 // доигрывается ещё не подтверждённый ввод. Расхождение показанного и исправленного положения гасится плавно.
 import { packInput, unpackInput, emptyInput } from '../sim/world.js';
-import { INPUT_MASK, EDGE_BITS } from './protocol.js';
+import { INPUT_MASK, EDGE_BITS, REMOTE_DELAY } from './protocol.js';
 
-const MAX_PENDING = 360, SNAP_LIMIT = 1.2;
+const MAX_PENDING = 360, SNAP_LIMIT = 1.2, BALL_SNAP_LIMIT = 6, REMOTE_KEEP = 10;
+const angLerp = (a, b, t) => { let d = (b - a) % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; else if (d < -Math.PI) d += Math.PI * 2; return a + d * t; };
 
 export class NetSession {
   // world — World в режиме дуэли; send(obj) — отправка сообщения серверу
@@ -19,6 +20,9 @@ export class NetSession {
     this.waitSync = 0; this._syncN = 0; this._fresh = false; // ждём подтверждения свежей синхронизации с этим номером
     this.err = { p: [{ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }], b: { x: 0, y: 0, z: 0 } };
     this._before = {}; this._after = {};
+    // Соперник рисуется не по предсказанию, а по подтверждённым состояниям сервера с небольшим отставанием:
+    // его нельзя угадать на время пинга вперёд, а интерполяция между настоящими положениями не дёргается.
+    this.remoteBuf = []; this.renderTick = 0;
   }
 
   get state() { return this.lobby ? this.lobby.state : 'connecting'; }
@@ -83,6 +87,13 @@ export class NetSession {
     if (had) w.snapshot(this._before);
     w.loadState(m.w);
     this.hasState = true;
+    if (!had) this.remoteBuf.length = 0;
+    const rb = this.remoteBuf, lastR = rb[rb.length - 1];
+    if (!lastR || w.tick > lastR.tick) {
+      const slot = rb.length >= REMOTE_KEEP ? rb.shift() : { tick: 0, v: {} };
+      slot.tick = w.tick; w._snapPlayer(w.players[1 - this.me], slot.v);
+      rb.push(slot);
+    } else if (w.tick < lastR.tick) { rb.length = 0; } // новый матч: счёт шагов начался заново
     // соперник до следующего состояния продолжает с последним известным вводом, без повторных нажатий
     const r = m.i[1 - this.me];
     unpackInput([r[0], r[1], r[2] & ~EDGE_BITS], this.remote);
@@ -102,14 +113,43 @@ export class NetSession {
       const a = w.snapshot(this._after), b = this._before, e = this.err;
       this._acc(e.p[0], b.px - a.px, b.py - a.py, b.pz - a.pz);
       this._acc(e.p[1], b.p2.px - a.p2.px, b.p2.py - a.p2.py, b.p2.pz - a.p2.pz);
-      this._acc(e.b, b.bx - a.bx, b.by - a.by, b.bz - a.bz);
+      this._acc(e.b, b.bx - a.bx, b.by - a.by, b.bz - a.bz, BALL_SNAP_LIMIT);
     } else this.clearError();
     return true;
   }
 
-  _acc(o, dx, dy, dz) {
+  _acc(o, dx, dy, dz, limit = SNAP_LIMIT) {
     o.x += dx; o.y += dy; o.z += dz;
-    if (Math.hypot(o.x, o.y, o.z) > SNAP_LIMIT) o.x = o.y = o.z = 0; // большое расхождение (ввод мяча, гол) — без «резинки»
+    if (Math.hypot(o.x, o.y, o.z) > limit) o.x = o.y = o.z = 0; // большое расхождение (ввод мяча, гол) — без «резинки»
+  }
+
+  // Положение соперника для рендера: интерполяция между подтверждёнными состояниями сервера.
+  // out — снимок игрока (как World._snapPlayer); dt — время кадра, с. Возвращает false, если состояний ещё нет.
+  remoteView(out, dt) {
+    const rb = this.remoteBuf, n = rb.length;
+    if (!n) return false;
+    const target = rb[n - 1].tick - REMOTE_DELAY;
+    this.renderTick += dt * this.world.P.simHz;
+    const off = target - this.renderTick;
+    if (Math.abs(off) > 24) this.renderTick = target; // после паузы, возврата в игру или начала матча
+    else this.renderTick += off * Math.min(1, dt * 3); // мягкая подстройка под темп сервера
+    const rt = this.renderTick;
+    let i = n - 1;
+    while (i > 0 && rb[i - 1].tick >= rt) i--;
+    const b = rb[i], a = rb[Math.max(0, i - 1)];
+    const k = b.tick > a.tick ? Math.max(0, Math.min(1, (rt - a.tick) / (b.tick - a.tick))) : 1;
+    const A = a.v, B = b.v, L = (x, y) => x + (y - x) * k;
+    out.px = L(A.px, B.px); out.pz = L(A.pz, B.pz); out.py = L(A.py, B.py); out.vx = L(A.vx, B.vx); out.vz = L(A.vz, B.vz);
+    out.yaw = angLerp(A.yaw, B.yaw, k);
+    out.feet = out.feet || [{}, {}];
+    for (let j = 0; j < 2; j++) {
+      const fa = A.feet[j], fb = B.feet[j], f = out.feet[j];
+      f.x = L(fa.x, fb.x); f.z = L(fa.z, fb.z); f.h = L(fa.h, fb.h); f.yaw = angLerp(fa.yaw, fb.yaw, k);
+      f.planted = fb.planted; f.u = fb.u; f.top = fb.top;
+    }
+    let dgp = B.gp - A.gp; if (dgp > 0.5) dgp -= 1; else if (dgp < -0.5) dgp += 1;
+    out.gp = (((A.gp + dgp * k) % 1) + 1) % 1; out.gait = B.gait;
+    return true;
   }
 
   clearError() { for (const o of [this.err.p[0], this.err.p[1], this.err.b]) o.x = o.y = o.z = 0; }
@@ -133,7 +173,7 @@ export class NetSession {
   // состояние сервера — без доигрывания пропущенного и без ускорения.
   resync() {
     this.pending.length = 0; this.out.length = 0; this.snap = null; this.serverEvents.length = 0;
-    this.clearError();
+    this.clearError(); this.remoteBuf.length = 0;
     this.waitSync = ++this._syncN;
     this.send({ t: 'sync', n: this.waitSync });
   }

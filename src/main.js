@@ -38,6 +38,7 @@ const game = {
   replay: null, fps: 60, lab: null, serveIndex: 0,
 };
 window.__game = LAB_ENABLED ? game : undefined;
+game.version = '0.3.0';
 
 const { input, scene, rig, rig2, hud, sfx } = game;
 let world = sandbox;
@@ -46,6 +47,7 @@ let acc = 0, last = performance.now(), lastRaw = last;
 let prev = duel.snapshot(), cur = duel.snapshot();
 const view = duel.snapshot();
 const frameIn = emptyInput();
+game.view = view;
 const ZERO = { x: 0, y: 0, z: 0 };
 
 function applySettings() {
@@ -133,7 +135,7 @@ function mainMenu() {
   lobby.close();
   setMode('sandbox');
   game.state = 'menu';
-  hud.openMenu('Soccer Duel', 'Enter / A — выбрать, ↑↓ — пункт.', [
+  hud.openMenu('Soccer Duel', `Enter / A — выбрать, ↑↓ — пункт. Версия ${game.version}.`, [
     { label: 'Песочница', act: () => { hud.closeMenu(); input.suppressHeld(); game.state = 'play'; last = performance.now(); acc = 0; } },
     { label: 'Игра по сети: создать комнату', act: () => openLobby('create') },
     { label: 'Игра по сети: войти по коду', act: () => openLobby('join') },
@@ -401,6 +403,7 @@ function runFrame(now) {
   const err = sess ? sess.err : null;
   lerpPlayer(view, prev, cur, a, err ? err.p[0] : ZERO);
   if (online) lerpPlayer(view.p2, prev.p2, cur.p2, a, err ? err.p[1] : ZERO);
+  if (sess && sess.hasState && sess.me >= 0) sess.remoteView(sess.me === 0 ? view.p2 : view, running ? dtReal : 0);
   const eb = err ? err.b : ZERO;
   view.bx = prev.bx + (cur.bx - prev.bx) * a + eb.x; view.bz = prev.bz + (cur.bz - prev.bz) * a + eb.z;
   view.by = Math.max(world.P.ball.radius, prev.by + (cur.by - prev.by) * a + eb.y);
