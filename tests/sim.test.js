@@ -595,7 +595,7 @@ test('ворота выступают в поле: гол в створ, шта�
   const g = shot((b) => { b.x = 4; b.y = 0.6; b.z = 0.5; b.vx = 22; b.vy = 1; });
   assert.equal(g.goals, 1);
   assert.ok(g.types.includes('net:back'), 'мяч погашен задней сеткой');
-  assert.ok(g.b.x > gx && g.b.x < F.length / 2 && Math.abs(g.b.z) < F.goalWidth / 2, 'мяч лежит в воротах');
+  assert.ok(g.b.x > F.length / 2 && g.b.x < F.length / 2 + F.goalBack && Math.abs(g.b.z) < F.goalWidth / 2, 'мяч лежит в глубине ворот, за торцевым бортом');
   // в штангу: отскок по круглой поверхности обратно в поле, гола нет
   const post = shot((b) => { b.x = 4; b.y = 0.5; b.z = F.goalWidth / 2 + 0.02; b.vx = 18; });
   assert.ok(post.types.includes('post'));

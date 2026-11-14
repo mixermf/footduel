@@ -176,8 +176,8 @@ export function stepBall(b, dt, P, events, bodyHook) {
         }
       }
       const inBox = behind && Math.abs(b.z) < gHalf && b.y < F.goalHeight;
-      // торцевой борт — сплошной по всей ширине; внутри ворот перед ним висит задняя сетка
-      const endX = halfL - r - (inBox ? F.netGap : 0);
+      // торцевой борт с проёмом по раме ворот: внутри ворот мяч идёт дальше, до задней сетки за коробкой
+      const endX = (inBox ? halfL + F.goalBack : halfL) - r;
       if (b.x * sx > endX) {
         b.x = sx * endX;
         if (b.vx * sx > 0) {

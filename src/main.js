@@ -38,7 +38,7 @@ const game = {
   replay: null, fps: 60, lab: null, serveIndex: 0,
 };
 window.__game = LAB_ENABLED ? game : undefined;
-game.version = '0.5.0';
+game.version = '0.5.1';
 
 const { input, scene, rig, rig2, hud, sfx } = game;
 let world = sandbox;

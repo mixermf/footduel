@@ -102,7 +102,9 @@ export class GameScene {
     addBoard(L / 4, -(W / 2 + th / 2), L / 2, th, boardMatR);
     addBoard(-L / 4, W / 2 + th / 2, L / 2, th, nearMat(0x2c4a7a));
     addBoard(L / 4, W / 2 + th / 2, L / 2, th, nearMat(0x7a3a2c));
-    for (const sx of [-1, 1]) addBoard(sx * (L / 2 + th / 2), 0, th, W, sx < 0 ? boardMatL : boardMatR); // торец сплошной: ворота стоят перед ним
+    // торцевые борта с проёмом по ширине ворот: ворота уходят за коробку
+    const endLen = (W - gw) / 2;
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) addBoard(sx * (L / 2 + th / 2), sz * (gw / 2 + endLen / 2), th, endLen, sx < 0 ? boardMatL : boardMatR);
 
     // коробка выше бортов — прозрачные панели (физическая высота fenceHeight): мяч виден с любой стороны
     const fenceH = F.fenceHeight - bh;
@@ -110,7 +112,15 @@ export class GameScene {
       new THREE.MeshBasicMaterial({ color: 0xa9cbff, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false }));
     const far = glass(L, 0.075); far.position.set(0, bh + fenceH / 2, -W / 2); s.add(far);
     const near = glass(L, 0.02); near.position.set(0, bh + fenceH / 2, W / 2); s.add(near);
-    for (const sx of [-1, 1]) { const e = glass(W, 0.055); e.rotation.y = Math.PI / 2; e.position.set(sx * L / 2, bh + fenceH / 2, 0); s.add(e); }
+    // торцевое остекление: сплошное выше ворот, по бокам от проёма — от борта
+    const pane = (w, h, x, y, z, opacity) => {
+      const e = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: 0xa9cbff, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false }));
+      e.rotation.y = Math.PI / 2; e.position.set(x, y, z); s.add(e);
+    };
+    for (const sx of [-1, 1]) {
+      pane(W, F.fenceHeight - gh, sx * L / 2, (F.fenceHeight + gh) / 2, 0, 0.055);
+      for (const sz of [-1, 1]) pane(endLen, gh - bh, sx * L / 2, (gh + bh) / 2, sz * (gw / 2 + endLen / 2), 0.055);
+    }
     // каркас коробки: показывает её границы и высоту возврата высоких мячей
     const railMat = new THREE.MeshStandardMaterial({ color: 0xbfc8d6, roughness: 0.4, metalness: 0.4 });
     const thinMat = new THREE.MeshBasicMaterial({ color: 0xbfc8d6, transparent: true, opacity: 0.35 });
@@ -119,25 +129,26 @@ export class GameScene {
       if (ax === 'x') m.rotation.z = Math.PI / 2; else if (ax === 'z') m.rotation.x = Math.PI / 2;
       m.position.set(x, y, z); s.add(m);
     };
-    rail('x', L, 0, F.fenceHeight, -W / 2); rail('x', L, 0, F.fenceHeight, W / 2); rail('z', W, -L / 2, F.fenceHeight, 0); rail('z', W, L / 2, F.fenceHeight, 0);
+    // ближней к камере верхней балки нет: она проходила бы через кадр поперёк поля
+    rail('x', L, 0, F.fenceHeight, -W / 2); rail('z', W, -L / 2, F.fenceHeight, 0); rail('z', W, L / 2, F.fenceHeight, 0);
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) rail('y', F.fenceHeight, sx * L / 2, F.fenceHeight / 2, sz * W / 2, 0.04);
     for (let x = -L / 2 + 3; x < L / 2 - 0.1; x += 3) rail('y', fenceH, x, bh + fenceH / 2, -W / 2, 0.015, thinMat); // стойки остекления дальней стены
-    for (const sx of [-1, 1]) rail('y', fenceH, sx * L / 2, bh + fenceH / 2, 0, 0.015, thinMat);
+
 
     // ворота: круглая рама стоит в поле на линии ворот, сетка тянется от рамы до торцевого борта и прогибается от мяча
     const postMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, metalness: 0.1 });
     const stayMat = new THREE.MeshStandardMaterial({ color: 0xcfd6e0, roughness: 0.5 });
     const netTex = gridTexture('rgba(255,255,255,0.95)', 2, 32);
-    const pr = F.postRadius, gi = F.goalInset;
+    const pr = F.postRadius, gi = F.goalInset, depth = F.goalInset + F.goalBack;
     this.nets = [];
     for (const sx of [-1, 1]) {
-      const x = sx * (L / 2 - gi), xb = sx * (L / 2 - F.netGap); // линия ворот и задняя сетка перед бортом
+      const x = sx * (L / 2 - gi), xb = sx * (L / 2 + F.goalBack); // линия ворот и задняя сетка за коробкой
       for (const sz of [-1, 1]) {
         const p = new THREE.Mesh(new THREE.CylinderGeometry(pr, pr, gh, 20), postMat);
         p.position.set(x, gh / 2, sz * gw / 2); p.castShadow = true; s.add(p);
         const joint = new THREE.Mesh(new THREE.SphereGeometry(pr, 16, 12), postMat); joint.position.set(x, gh, sz * gw / 2); s.add(joint);
         // задняя стойка и верхняя растяжка держат сетку
-        const stay = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, gi - F.netGap, 8), stayMat);
+        const stay = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, depth, 8), stayMat);
         stay.rotation.z = Math.PI / 2; stay.position.set((x + xb) / 2, gh, sz * gw / 2); s.add(stay);
         const back = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, gh, 8), stayMat); back.position.set(xb, gh / 2, sz * gw / 2); s.add(back);
       }
@@ -146,10 +157,16 @@ export class GameScene {
       const V = (a, b, c) => new THREE.Vector3(a, b, c);
       // origin, оси u и v (единичные), размеры, нормаль наружу из ворот
       this._addNet(netTex, sx, 'back', V(xb, 0, -gw / 2), V(0, 0, 1), V(0, 1, 0), gw, gh, V(sx, 0, 0));
-      const depth = gi - F.netGap;
       this._addNet(netTex, sx, 'far', V(x, 0, -gw / 2), V(sx, 0, 0), V(0, 1, 0), depth, gh, V(0, 0, -1));
       this._addNet(netTex, sx, 'near', V(x, 0, gw / 2), V(sx, 0, 0), V(0, 1, 0), depth, gh, V(0, 0, 1));
       this._addNet(netTex, sx, 'top', V(x, gh, -gw / 2), V(sx, 0, 0), V(0, 0, 1), depth, gw, V(0, 1, 0));
+      // пол ворот за пределами коробки и нижняя растяжка задней сетки
+      const floor = new THREE.Mesh(new THREE.PlaneGeometry(F.goalBack, gw), new THREE.MeshStandardMaterial({ color: sx < 0 ? 0x24406b : 0x6b3024, roughness: 1 }));
+      floor.rotation.x = -Math.PI / 2; floor.position.set(sx * (L / 2 + F.goalBack / 2), 0.003, 0); floor.receiveShadow = true; s.add(floor);
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, gw, 8), stayMat);
+      base.rotation.x = Math.PI / 2; base.position.set(xb, 0.02, 0); s.add(base);
+      const topBack = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, gw, 8), stayMat);
+      topBack.rotation.x = Math.PI / 2; topBack.position.set(xb, gh, 0); s.add(topBack);
     }
   }
 
@@ -168,7 +185,7 @@ export class GameScene {
     const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: t, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false }));
     mesh.frustumCulled = false;
     this.scene.add(mesh);
-    const maxOut = part === 'back' ? this.P.field.netGap - 0.03 : 0.45; // задняя сетка не уходит сквозь борт
+    const maxOut = 0.45;
     this.nets.push({ side, part, origin, u, v, w, h, normal, mesh, base, ab, ca: w / 2, cb: h / 2, amp: 0, vel: 0, rest: 0, dirty: false, maxOut });
   }
 
@@ -287,7 +304,10 @@ export class GameScene {
     // в кадре обязаны быть: всё покрытие, борта и обе рамы ворот с сеткой
     const hx = F.length / 2 + 0.25, hz = F.width / 2 + 0.25;
     for (const x of [-hx, hx]) for (const z of [-hz, hz]) for (const y of [0, F.boardHeight]) pts.push(new THREE.Vector3(x, y, z));
-    for (const x of [-1, 1]) for (const z of [-1, 1]) pts.push(new THREE.Vector3(x * (F.length / 2 - F.goalInset), F.goalHeight + 0.2, z * F.goalWidth / 2));
+    for (const x of [-1, 1]) for (const z of [-1, 1]) {
+      pts.push(new THREE.Vector3(x * (F.length / 2 - F.goalInset), F.goalHeight + 0.2, z * F.goalWidth / 2));
+      for (const y of [0, F.goalHeight + 0.1]) pts.push(new THREE.Vector3(x * (F.length / 2 + F.goalBack + 0.1), y, z * F.goalWidth / 2)); // сетка за коробкой
+    }
     let lo = 8, hi = 80;
     const v = new THREE.Vector3();
     for (let i = 0; i < 24; i++) {
