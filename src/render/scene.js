@@ -36,7 +36,7 @@ export class GameScene {
     this.camera = new THREE.PerspectiveCamera(34, 16 / 9, 0.5, 200);
     this.view = 'game';
     this.shake = 0; this.shakeEnabled = true;
-    this._camTarget = new THREE.Vector3(0, 0.4, 0.2);
+    this._camTarget = new THREE.Vector3(0, 0.4, -0.9);
 
     const hemi = new THREE.HemisphereLight(0xcfe3ff, 0x25402c, 1.1);
     this.scene.add(hemi);
@@ -58,7 +58,7 @@ export class GameScene {
   }
 
   _buildField(F) {
-    const L = F.length, W = F.width, gw = F.goalWidth, gh = F.goalHeight, gd = F.goalDepth;
+    const L = F.length, W = F.width, gw = F.goalWidth, gh = F.goalHeight;
     const s = this.scene;
     // окружение
     const apron = new THREE.Mesh(new THREE.PlaneGeometry(80, 60), new THREE.MeshStandardMaterial({ color: 0x18202c, roughness: 1 }));
@@ -74,80 +74,145 @@ export class GameScene {
       g.beginPath(); g.moveTo(w / 2, 0); g.lineTo(w / 2, h); g.stroke();
       g.beginPath(); g.arc(w / 2, h / 2, 1.5 * px, 0, Math.PI * 2); g.stroke();
       g.fillStyle = '#fff'; g.beginPath(); g.arc(w / 2, h / 2, 7, 0, Math.PI * 2); g.fill();
-      for (const x of [0, w]) { // зона ворот
-        const d = 2.2 * px, hw = (gw / 2 + 1) * px;
-        g.strokeRect(x === 0 ? 4 : w - 4 - d, h / 2 - hw, d, hw * 2);
+      const ins = F.goalInset * px;
+      for (const left of [true, false]) {
+        // пол внутри ворот — в цвет стороны; линия ворот между стойками; площадь ворот от линии
+        g.fillStyle = left ? 'rgba(36,64,107,0.85)' : 'rgba(107,48,36,0.85)';
+        g.fillRect(left ? 0 : w - ins, h / 2 - (gw / 2) * px, ins, gw * px);
+        const lx = left ? ins : w - ins, d = 2.2 * px, hw = (gw / 2 + 1) * px;
+        g.beginPath(); g.moveTo(lx, h / 2 - (gw / 2) * px); g.lineTo(lx, h / 2 + (gw / 2) * px); g.stroke();
+        g.strokeRect(left ? lx : lx - d, h / 2 - hw, d, hw * 2);
       }
     });
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(L, W), new THREE.MeshStandardMaterial({ map: turf, roughness: 0.95 }));
     ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; s.add(ground);
 
-    // борта: сплошные до boardHeight, выше — сетка до fenceHeight
+    // борта: сплошные до boardHeight; ближний к камере — полупрозрачный, чтобы не закрывать край поля
     const boardMatL = new THREE.MeshStandardMaterial({ color: 0x2c4a7a, roughness: 0.7 });
     const boardMatR = new THREE.MeshStandardMaterial({ color: 0x7a3a2c, roughness: 0.7 });
+    const nearMat = (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6, transparent: true, opacity: 0.3, depthWrite: false });
     const cap = new THREE.MeshStandardMaterial({ color: 0xe9edf2, roughness: 0.5 });
     const bh = F.boardHeight, th = 0.12;
     const addBoard = (x, z, sx, sz, mat) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(sx, bh, sz), mat);
-      m.position.set(x, bh / 2, z); m.castShadow = true; m.receiveShadow = true; s.add(m);
+      m.position.set(x, bh / 2, z); m.castShadow = !mat.transparent; m.receiveShadow = !mat.transparent; s.add(m);
       const c = new THREE.Mesh(new THREE.BoxGeometry(sx + 0.02, 0.05, sz + 0.02), cap); c.position.set(x, bh + 0.025, z); s.add(c);
     };
-    for (const sz of [-1, 1]) {
-      addBoard(-L / 4, sz * (W / 2 + th / 2), L / 2, th, boardMatL);
-      addBoard(L / 4, sz * (W / 2 + th / 2), L / 2, th, boardMatR);
-    }
-    const endLen = (W - gw) / 2;
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-      addBoard(sx * (L / 2 + th / 2), sz * (gw / 2 + endLen / 2), th, endLen, sx < 0 ? boardMatL : boardMatR);
-    }
-    // сетка ограждения (физическая высота fenceHeight; ближняя к камере сторона почти прозрачна)
-    const fenceH = F.fenceHeight - bh;
-    const mkFence = (w, opacity) => {
-      const t = gridTexture('rgba(220,230,245,0.9)', 2, 32); t.repeat.set(w / 0.35, fenceH / 0.35);
-      return new THREE.Mesh(new THREE.PlaneGeometry(w, fenceH), new THREE.MeshBasicMaterial({ map: t, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false }));
-    };
-    const far = mkFence(L, 0.22); far.position.set(0, bh + fenceH / 2, -W / 2); s.add(far);
-    const near = mkFence(L, 0.05); near.position.set(0, bh + fenceH / 2, W / 2); s.add(near);
-    for (const sx of [-1, 1]) {
-      const e = mkFence(W, 0.16); e.rotation.y = Math.PI / 2; e.position.set(sx * L / 2, bh + fenceH / 2, 0); s.add(e);
-      // участок над воротами
-      const t = gridTexture('rgba(220,230,245,0.9)', 2, 32); t.repeat.set(gw / 0.35, (bh - 0) / 0.35);
-    }
-    // рама верхнего края ограждения: показывает высоту возврата высоких мячей
-    const railMat = new THREE.MeshStandardMaterial({ color: 0xbfc8d6, roughness: 0.4, metalness: 0.4 });
-    const rail = (ax, len, x, z) => {
-      const m = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, len, 8), railMat);
-      if (ax === 'x') m.rotation.z = Math.PI / 2; else m.rotation.x = Math.PI / 2;
-      m.position.set(x, F.fenceHeight, z); s.add(m);
-    };
-    rail('x', L, 0, -W / 2); rail('x', L, 0, W / 2); rail('z', W, -L / 2, 0); rail('z', W, L / 2, 0);
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, F.fenceHeight, 8), railMat);
-      p.position.set(sx * L / 2, F.fenceHeight / 2, sz * W / 2); s.add(p);
-    }
+    addBoard(-L / 4, -(W / 2 + th / 2), L / 2, th, boardMatL);
+    addBoard(L / 4, -(W / 2 + th / 2), L / 2, th, boardMatR);
+    addBoard(-L / 4, W / 2 + th / 2, L / 2, th, nearMat(0x2c4a7a));
+    addBoard(L / 4, W / 2 + th / 2, L / 2, th, nearMat(0x7a3a2c));
+    for (const sx of [-1, 1]) addBoard(sx * (L / 2 + th / 2), 0, th, W, sx < 0 ? boardMatL : boardMatR); // торец сплошной: ворота стоят перед ним
 
-    // ворота
-    const postMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35 });
+    // коробка выше бортов — прозрачные панели (физическая высота fenceHeight): мяч виден с любой стороны
+    const fenceH = F.fenceHeight - bh;
+    const glass = (w, opacity) => new THREE.Mesh(new THREE.PlaneGeometry(w, fenceH),
+      new THREE.MeshBasicMaterial({ color: 0xa9cbff, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false }));
+    const far = glass(L, 0.075); far.position.set(0, bh + fenceH / 2, -W / 2); s.add(far);
+    const near = glass(L, 0.02); near.position.set(0, bh + fenceH / 2, W / 2); s.add(near);
+    for (const sx of [-1, 1]) { const e = glass(W, 0.055); e.rotation.y = Math.PI / 2; e.position.set(sx * L / 2, bh + fenceH / 2, 0); s.add(e); }
+    // каркас коробки: показывает её границы и высоту возврата высоких мячей
+    const railMat = new THREE.MeshStandardMaterial({ color: 0xbfc8d6, roughness: 0.4, metalness: 0.4 });
+    const thinMat = new THREE.MeshBasicMaterial({ color: 0xbfc8d6, transparent: true, opacity: 0.35 });
+    const rail = (ax, len, x, y, z, rad = 0.03, mat = railMat) => {
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad, len, 8), mat);
+      if (ax === 'x') m.rotation.z = Math.PI / 2; else if (ax === 'z') m.rotation.x = Math.PI / 2;
+      m.position.set(x, y, z); s.add(m);
+    };
+    rail('x', L, 0, F.fenceHeight, -W / 2); rail('x', L, 0, F.fenceHeight, W / 2); rail('z', W, -L / 2, F.fenceHeight, 0); rail('z', W, L / 2, F.fenceHeight, 0);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) rail('y', F.fenceHeight, sx * L / 2, F.fenceHeight / 2, sz * W / 2, 0.04);
+    for (let x = -L / 2 + 3; x < L / 2 - 0.1; x += 3) rail('y', fenceH, x, bh + fenceH / 2, -W / 2, 0.015, thinMat); // стойки остекления дальней стены
+    for (const sx of [-1, 1]) rail('y', fenceH, sx * L / 2, bh + fenceH / 2, 0, 0.015, thinMat);
+
+    // ворота: круглая рама стоит в поле на линии ворот, сетка тянется от рамы до торцевого борта и прогибается от мяча
+    const postMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, metalness: 0.1 });
+    const stayMat = new THREE.MeshStandardMaterial({ color: 0xcfd6e0, roughness: 0.5 });
     const netTex = gridTexture('rgba(255,255,255,0.95)', 2, 32);
+    const pr = F.postRadius, gi = F.goalInset;
+    this.nets = [];
     for (const sx of [-1, 1]) {
-      const x = sx * L / 2;
+      const x = sx * (L / 2 - gi), xb = sx * (L / 2 - F.netGap); // линия ворот и задняя сетка перед бортом
       for (const sz of [-1, 1]) {
-        const p = new THREE.Mesh(new THREE.CylinderGeometry(F.postRadius, F.postRadius, gh, 12), postMat);
+        const p = new THREE.Mesh(new THREE.CylinderGeometry(pr, pr, gh, 20), postMat);
         p.position.set(x, gh / 2, sz * gw / 2); p.castShadow = true; s.add(p);
+        const joint = new THREE.Mesh(new THREE.SphereGeometry(pr, 16, 12), postMat); joint.position.set(x, gh, sz * gw / 2); s.add(joint);
+        // задняя стойка и верхняя растяжка держат сетку
+        const stay = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, gi - F.netGap, 8), stayMat);
+        stay.rotation.z = Math.PI / 2; stay.position.set((x + xb) / 2, gh, sz * gw / 2); s.add(stay);
+        const back = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, gh, 8), stayMat); back.position.set(xb, gh / 2, sz * gw / 2); s.add(back);
       }
-      const bar = new THREE.Mesh(new THREE.CylinderGeometry(F.postRadius, F.postRadius, gw + F.postRadius * 2, 12), postMat);
+      const bar = new THREE.Mesh(new THREE.CylinderGeometry(pr, pr, gw, 20), postMat);
       bar.rotation.x = Math.PI / 2; bar.position.set(x, gh, 0); bar.castShadow = true; s.add(bar);
-      const net = (w, h, px2, py, pz, ry, rx = 0) => {
-        const t = netTex.clone(); t.needsUpdate = true; t.repeat.set(w / 0.16, h / 0.16);
-        const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: t, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }));
-        m.position.set(px2, py, pz); m.rotation.set(rx, ry, 0); s.add(m);
-      };
-      net(gw, gh, x + sx * gd, gh / 2, 0, Math.PI / 2);
-      net(gd, gh, x + sx * gd / 2, gh / 2, -gw / 2, 0);
-      net(gd, gh, x + sx * gd / 2, gh / 2, gw / 2, 0);
-      net(gd, gw, x + sx * gd / 2, gh, 0, 0, Math.PI / 2);
-      const floor = new THREE.Mesh(new THREE.PlaneGeometry(gd, gw), new THREE.MeshStandardMaterial({ color: sx < 0 ? 0x24406b : 0x6b3024, roughness: 1 }));
-      floor.rotation.x = -Math.PI / 2; floor.position.set(x + sx * gd / 2, 0.002, 0); floor.receiveShadow = true; s.add(floor);
+      const V = (a, b, c) => new THREE.Vector3(a, b, c);
+      // origin, оси u и v (единичные), размеры, нормаль наружу из ворот
+      this._addNet(netTex, sx, 'back', V(xb, 0, -gw / 2), V(0, 0, 1), V(0, 1, 0), gw, gh, V(sx, 0, 0));
+      const depth = gi - F.netGap;
+      this._addNet(netTex, sx, 'far', V(x, 0, -gw / 2), V(sx, 0, 0), V(0, 1, 0), depth, gh, V(0, 0, -1));
+      this._addNet(netTex, sx, 'near', V(x, 0, gw / 2), V(sx, 0, 0), V(0, 1, 0), depth, gh, V(0, 0, 1));
+      this._addNet(netTex, sx, 'top', V(x, gh, -gw / 2), V(sx, 0, 0), V(0, 0, 1), depth, gw, V(0, 1, 0));
+    }
+  }
+
+  // Полотно сетки: сетка вершин, которую можно прогибать вдоль нормали
+  _addNet(tex, side, part, origin, u, v, w, h, normal) {
+    const cell = 0.16, nu = Math.max(2, Math.round(w / cell)), nv = Math.max(2, Math.round(h / cell));
+    const geo = new THREE.PlaneGeometry(w, h, nu, nv);
+    const pos = geo.attributes.position, base = new Float32Array(pos.count * 3), ab = new Float32Array(pos.count * 2);
+    for (let i = 0; i < pos.count; i++) {
+      const a = pos.getX(i) + w / 2, b = pos.getY(i) + h / 2;
+      const x = origin.x + u.x * a + v.x * b, y = origin.y + u.y * a + v.y * b, z = origin.z + u.z * a + v.z * b;
+      pos.setXYZ(i, x, y, z); base.set([x, y, z], i * 3); ab.set([a, b], i * 2);
+    }
+    pos.needsUpdate = true; geo.computeBoundingSphere();
+    const t = tex.clone(); t.needsUpdate = true; t.repeat.set(w / cell, h / cell);
+    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: t, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false }));
+    mesh.frustumCulled = false;
+    this.scene.add(mesh);
+    const maxOut = part === 'back' ? this.P.field.netGap - 0.03 : 0.45; // задняя сетка не уходит сквозь борт
+    this.nets.push({ side, part, origin, u, v, w, h, normal, mesh, base, ab, ca: w / 2, cb: h / 2, amp: 0, vel: 0, rest: 0, dirty: false, maxOut });
+  }
+
+  // Мяч ударил в сетку (событие симуляции): толчок полотну в точке удара, наружу или внутрь — по стороне, где мяч
+  netHit(side, part, x, y, z, speed) {
+    const n = this.nets.find((q) => q.side === side && q.part === part);
+    if (!n) return;
+    const rx = x - n.origin.x, ry = y - n.origin.y, rz = z - n.origin.z;
+    n.ca = rx * n.u.x + ry * n.u.y + rz * n.u.z; n.cb = rx * n.v.x + ry * n.v.y + rz * n.v.z;
+    const d = rx * n.normal.x + ry * n.normal.y + rz * n.normal.z;
+    n.vel += (d < 0 ? 1 : -1) * Math.min(4.5, 0.6 + speed * 0.22);
+  }
+
+  // Прогиб сеток: пружина с затуханием после удара и постоянный прогиб там, где мяч лежит на полотне
+  updateNets(bx, by, bz, dt) {
+    const r = this.P.ball.radius;
+    for (const n of this.nets) {
+      const rx = bx - n.origin.x, ry = by - n.origin.y, rz = bz - n.origin.z;
+      const a = rx * n.u.x + ry * n.u.y + rz * n.u.z, b = rx * n.v.x + ry * n.v.y + rz * n.v.z;
+      const d = rx * n.normal.x + ry * n.normal.y + rz * n.normal.z;
+      let rest = 0;
+      if (a > -0.05 && a < n.w + 0.05 && b > -0.05 && b < n.h + 0.05 && Math.abs(d) < r + 0.07) {
+        rest = d < 0 ? r + 0.07 + d : -(r + 0.07 - d); // мяч вплотную: полотно облегает его
+        n.ca += (a - n.ca) * Math.min(1, dt * 20); n.cb += (b - n.cb) * Math.min(1, dt * 20);
+      }
+      n.rest += (rest - n.rest) * Math.min(1, dt * 18);
+      if (dt > 0) {
+        const steps = Math.max(1, Math.ceil(dt / 0.008)), h = dt / steps;
+        for (let i = 0; i < steps; i++) { n.vel += (-330 * n.amp - 11 * n.vel) * h; n.amp += n.vel * h; }
+        n.amp = Math.max(-0.45, Math.min(n.maxOut, n.amp));
+      }
+      const total = Math.min(n.maxOut, n.amp + n.rest);
+      if (Math.abs(total) < 0.002 && !n.dirty) continue;
+      n.dirty = Math.abs(total) >= 0.002;
+      const pos = n.mesh.geometry.attributes.position, base = n.base, ab = n.ab;
+      for (let i = 0; i < pos.count; i++) {
+        const pa = ab[i * 2], pb = ab[i * 2 + 1];
+        // края полотна закреплены на раме, борту и покрытии
+        const edge = Math.min(1, Math.min(pa, n.w - pa, pb, n.h - pb) / 0.3);
+        const dd = (pa - n.ca) * (pa - n.ca) + (pb - n.cb) * (pb - n.cb);
+        const k = total * edge * Math.exp(-dd / 0.32);
+        pos.setXYZ(i, base[i * 3] + n.normal.x * k, base[i * 3 + 1] + n.normal.y * k, base[i * 3 + 2] + n.normal.z * k);
+      }
+      pos.needsUpdate = true;
     }
   }
 
@@ -155,7 +220,7 @@ export class GameScene {
     if (!this.reboundPanel) {
       const F = this.P.field;
       const m = new THREE.Mesh(new THREE.BoxGeometry(0.1, F.goalHeight, F.goalWidth), new THREE.MeshStandardMaterial({ color: 0xd9a441, roughness: 0.6 }));
-      m.position.set(F.length / 2 + 0.05, F.goalHeight / 2, 0); m.castShadow = true;
+      m.position.set(F.length / 2 - F.goalInset + 0.05, F.goalHeight / 2, 0); m.castShadow = true;
       this.reboundPanel = m; this.scene.add(m);
     }
     this.reboundPanel.visible = on;
@@ -216,13 +281,13 @@ export class GameScene {
   _fitCamera() {
     const F = this.P.field, cam = this.camera;
     if (this.view !== 'game') return;
-    const dir = new THREE.Vector3(0, 0.76, 0.65).normalize();
+    const dir = new THREE.Vector3(0, 0.58, 0.81).normalize(); // ниже прежнего: мяч и игроки видны сбоку, высота читается лучше
     const target = this._camTarget;
     const pts = [];
     // в кадре обязаны быть: всё покрытие, борта и обе рамы ворот с сеткой
     const hx = F.length / 2 + 0.25, hz = F.width / 2 + 0.25;
     for (const x of [-hx, hx]) for (const z of [-hz, hz]) for (const y of [0, F.boardHeight]) pts.push(new THREE.Vector3(x, y, z));
-    for (const x of [-1, 1]) for (const z of [-1, 1]) for (const y of [0, F.goalHeight + 0.2]) pts.push(new THREE.Vector3(x * (F.length / 2 + F.goalDepth + 0.15), y, z * F.goalWidth / 2));
+    for (const x of [-1, 1]) for (const z of [-1, 1]) pts.push(new THREE.Vector3(x * (F.length / 2 - F.goalInset), F.goalHeight + 0.2, z * F.goalWidth / 2));
     let lo = 8, hi = 80;
     const v = new THREE.Vector3();
     for (let i = 0; i < 24; i++) {

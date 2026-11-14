@@ -580,3 +580,59 @@ test('опорная нога не остаётся позади корпуса:
   }
   assert.ok(worst < 0.75, 'спринт с разворотами: ' + worst.toFixed(2));
 });
+
+// ---------- ворота в поле: рама, сетка снаружи и изнутри
+test('ворота выступают в поле: гол в створ, штанга и перекладина отбивают, сетка снаружи не пускает', () => {
+  const P = createProfile(), F = P.field, gx = F.length / 2 - F.goalInset, r = P.ball.radius;
+  const shot = (set, ticks = 480) => {
+    const b = createBall(P), ev = [];
+    set(b);
+    const types = [];
+    for (let i = 0; i < ticks; i++) { ev.length = 0; stepBall(b, 1 / 120, P, ev, null); for (const e of ev) types.push(e.type + (e.part ? ':' + e.part : '')); }
+    return { b, types, goals: types.filter((t) => t === 'goal_line').length };
+  };
+  // прямой удар в створ: один гол, мяч остаётся в сетке между линией и бортом
+  const g = shot((b) => { b.x = 4; b.y = 0.6; b.z = 0.5; b.vx = 22; b.vy = 1; });
+  assert.equal(g.goals, 1);
+  assert.ok(g.types.includes('net:back'), 'мяч погашен задней сеткой');
+  assert.ok(g.b.x > gx && g.b.x < F.length / 2 && Math.abs(g.b.z) < F.goalWidth / 2, 'мяч лежит в воротах');
+  // в штангу: отскок по круглой поверхности обратно в поле, гола нет
+  const post = shot((b) => { b.x = 4; b.y = 0.5; b.z = F.goalWidth / 2 + 0.02; b.vx = 18; });
+  assert.ok(post.types.includes('post'));
+  assert.equal(post.goals, 0);
+  const post2 = shot((b) => { b.x = 4; b.y = 0.5; b.z = F.goalWidth / 2 - 0.08; b.vx = 18; }, 40);
+  assert.ok(post2.types.includes('post'));
+  assert.ok(post2.b.vz < -1, 'от внутренней стороны штанги мяч уходит к центру ворот: ' + post2.b.vz.toFixed(1));
+  // в перекладину
+  const bar = shot((b) => { b.x = 4; b.y = F.goalHeight - 0.05; b.z = 0; b.vx = 20; b.vy = 1.05; }, 60);
+  assert.ok(bar.types.includes('post'));
+  assert.equal(bar.goals, 0);
+  // сбоку из-за линии ворот: боковая сетка снаружи
+  const side = shot((b) => { b.x = gx + 0.4; b.y = 0.4; b.z = 3.5; b.vz = -12; });
+  assert.ok(side.types.includes('net:near'));
+  assert.equal(side.goals, 0);
+  assert.ok(side.b.z > F.goalWidth / 2, 'мяч остался снаружи ворот');
+  // навес на верхнюю сетку: мяч не проваливается и скатывается обратно в поле
+  const top = shot((b) => { b.x = gx + 0.4; b.y = 4; b.z = 0.3; b.vy = -1; }, 720);
+  assert.ok(top.types.includes('net:top'));
+  assert.equal(top.goals, 0);
+  assert.ok(top.b.x < gx && top.b.y < 0.5, 'мяч скатился перед воротами: x=' + top.b.x.toFixed(2) + ' y=' + top.b.y.toFixed(2));
+  // мяч за линией рядом со штангой, но вне рамы — не гол
+  const wide = shot((b) => { b.x = 4; b.y = 0.3; b.z = F.goalWidth / 2 + 0.6; b.vx = 15; });
+  assert.equal(wide.goals, 0);
+  assert.ok(wide.types.includes('wall'), 'мяч дошёл до торцевого борта мимо ворот');
+  assert.ok(r > 0);
+});
+
+test('игрок не заходит в ворота: упор в раму спереди и в сетку сбоку', () => {
+  const w = new World(createProfile(), { seed: 3 });
+  w.reset('motor');
+  const p = w.player, F = w.P.field, R = w.P.player.radius;
+  for (let i = 0; i < 360; i++) w.step(inp({ mx: -1 }));
+  assert.ok(p.x >= -(F.length / 2 - F.goalInset - R) - 1e-6, 'спереди игрок упирается в линию ворот: ' + p.x.toFixed(2));
+  for (let i = 0; i < 240; i++) w.step(inp({ mz: 1 }));
+  for (let i = 0; i < 240; i++) w.step(inp({ mx: -1 }));
+  assert.ok(p.x < -(F.length / 2 - F.goalInset), 'сбоку от ворот можно зайти за линию');
+  for (let i = 0; i < 240; i++) w.step(inp({ mz: -1 }));
+  assert.ok(p.z >= F.goalWidth / 2 + R - 1e-6, 'сбоку игрок упирается в сетку: ' + p.z.toFixed(2));
+});

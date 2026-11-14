@@ -38,7 +38,7 @@ const game = {
   replay: null, fps: 60, lab: null, serveIndex: 0,
 };
 window.__game = LAB_ENABLED ? game : undefined;
-game.version = '0.4.0';
+game.version = '0.5.0';
 
 const { input, scene, rig, rig2, hud, sfx } = game;
 let world = sandbox;
@@ -275,6 +275,7 @@ function handleEvents(events, me = 0, accept = null) {
       case 'header': sfx.play('body', 0.6); if (mine) hud.showToast('Игра головой', { ms: 500 }); break;
       case 'body': sfx.play('body', e.speed / 15); break;
       case 'wall': sfx.play(e.surface === 'board' ? 'wall' : 'net', e.speed / 18); break;
+      case 'net': sfx.play('net', e.speed / 18); scene.netHit(e.side, e.part, b.x, b.y, b.z, e.speed); break;
       case 'post': sfx.play('post', e.speed / 20); scene.shake = Math.max(scene.shake, 0.03); break;
       case 'bounce': sfx.play('bounce', e.speed / 10); break;
       case 'goal': {
@@ -420,6 +421,7 @@ function runFrame(now) {
   const P0 = world.players[0], P1 = world.players[1];
   const mine = world.players[sess && sess.me === 1 ? 1 : 0];
   scene.updateBall(view.bx, view.by, view.bz, cur.bqx, cur.bqy, cur.bqz, cur.bqw);
+  scene.updateNets(view.bx, view.by, view.bz, dtReal);
   rig.update(view, { ball, kick: P0.kick, gesture: P0.gesture, guard: P0.guard || !!P0.lunge }, dtVis);
   if (online && P1) rig2.update(view.p2, { ball, kick: P1.kick, gesture: P1.gesture, guard: P1.guard || !!P1.lunge }, dtVis);
   scene.updateAim(mine.kick, world.P);

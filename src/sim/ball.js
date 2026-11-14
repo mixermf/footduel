@@ -1,4 +1,4 @@
-// Мяч: самостоятельное физическое тело. Свободный полёт, качение, борта, ворота, стойки.
+// Мяч: самостоятельное физическое тело. Свободный полёт, качение, борта, рама и сетка ворот.
 // Защита от проскока — деление шага на подшаги не длиннее 4 см пути.
 
 export function createBall(P) {
@@ -102,60 +102,99 @@ export function stepBall(b, dt, P, events, bodyHook) {
         }
       }
     }
-    // торцы, ворота, стойки
+    // торцы и ворота. Рама стоит в поле перед торцевым бортом; сетка — мягкая преграда с обеих сторон:
+    // изнутри гасит забитый мяч, снаружи не пускает его в ворота сбоку и сверху.
     for (let sx = -1; sx <= 1; sx += 2) {
-      const bx = b.x * sx;
-      if (bx < halfL - 1.2) continue;
-      const lineX = sx * halfL;
-      // стойки (вертикальные цилиндры)
+      if (b.x * sx < halfL - F.goalInset - 1.2) continue;
+      const gx = halfL - F.goalInset, lineX = sx * gx; // линия ворот
       const walled = F.reboundWall && sx > 0;
-      if (!walled && b.y < F.goalHeight + F.postRadius) {
-        for (let sz = -1; sz <= 1; sz += 2) {
-          const pz = sz * gHalf;
-          const hit = reflectCylinder2(b, b.x, b.z, lineX, pz, r + F.postRadius, B.postRestitution,
-            (x, z) => { b.x = x; b.z = z; },
-            (nx, nz, e) => {
-              const vn = b.vx * nx + b.vz * nz;
+      const pzPrev = b.z - b.vz * h, pyPrev = b.y - b.vy * h, pxPrev = (b.x - b.vx * h) * sx;
+      if (!walled) {
+        // стойки — вертикальные цилиндры, перекладина — горизонтальный: отскок по нормали к круглой поверхности
+        if (b.y < F.goalHeight + F.postRadius) {
+          for (let sz = -1; sz <= 1; sz += 2) {
+            const hit = reflectCylinder2(b, b.x, b.z, lineX, sz * gHalf, r + F.postRadius, B.postRestitution,
+              (x, z) => { b.x = x; b.z = z; },
+              (nx, nz, e) => {
+                const vn = b.vx * nx + b.vz * nz;
+                if (vn >= 0) return 0;
+                b.vx -= (1 + e) * vn * nx; b.vz -= (1 + e) * vn * nz;
+                return -vn;
+              });
+            if (hit > 0.3) events.push({ type: 'post', speed: hit });
+          }
+        }
+        if (Math.abs(b.z) < gHalf + F.postRadius) {
+          const hit = reflectCylinder2(b, b.x, b.y, lineX, F.goalHeight, r + F.postRadius, B.postRestitution,
+            (x, y) => { b.x = x; b.y = y; },
+            (nx, ny, e) => {
+              const vn = b.vx * nx + b.vy * ny;
               if (vn >= 0) return 0;
-              b.vx -= (1 + e) * vn * nx; b.vz -= (1 + e) * vn * nz;
+              b.vx -= (1 + e) * vn * nx; b.vy -= (1 + e) * vn * ny;
               return -vn;
             });
           if (hit > 0.3) events.push({ type: 'post', speed: hit });
         }
+      } else if (Math.abs(b.z) < gHalf && b.y < F.goalHeight && pxPrev <= gx - r + 1e-9 && b.x * sx > gx - r) {
+        // щит песочницы закрывает створ
+        b.x = sx * (gx - r);
+        if (b.vx * sx > 0) {
+          const impact = b.vx * sx;
+          b.vx = -b.vx * B.wallRestitution; b.vz *= B.wallTangent; b.vy *= B.wallTangent; b.wy *= 0.6;
+          if (impact > 0.6) events.push({ type: 'wall', surface: 'board', speed: impact });
+        }
       }
-      // перекладина (горизонтальный цилиндр вдоль z)
-      if (!walled && Math.abs(b.z) < gHalf + F.postRadius) {
-        const hit = reflectCylinder2(b, b.x, b.y, lineX, F.goalHeight, r + F.postRadius, B.postRestitution,
-          (x, y) => { b.x = x; b.y = y; },
-          (nx, ny, e) => {
-            const vn = b.vx * nx + b.vy * ny;
-            if (vn >= 0) return 0;
-            b.vx -= (1 + e) * vn * nx; b.vy -= (1 + e) * vn * ny;
-            return -vn;
-          });
-        if (hit > 0.3) events.push({ type: 'post', speed: hit });
+      const behind = b.x * sx > gx; // центр мяча за линией ворот
+      if (behind) {
+        // боковые сетки: мяч остаётся с той стороны, с которой подошёл
+        for (let sz = -1; sz <= 1; sz += 2) {
+          const d = b.z * sz - gHalf;
+          if (Math.abs(d) < r && b.y < F.goalHeight + r * 0.5) {
+            const out = pzPrev * sz - gHalf >= 0 ? 1 : -1;
+            b.z = sz * (gHalf + out * r);
+            if (b.vz * sz * out < 0) {
+              const impact = Math.abs(b.vz);
+              b.vz = -b.vz * (out > 0 ? B.netOuterRestitution : B.netRestitution); b.vx *= 0.6;
+              if (impact > 0.8) events.push({ type: 'net', part: sz < 0 ? 'far' : 'near', side: sx, speed: impact });
+            }
+          }
+        }
+        // верхняя сетка: изнутри — на высоте перекладины, снаружи мяч лежит чуть выше, вровень с верхом перекладины
+        if (Math.abs(b.z) < gHalf) {
+          const out = pyPrev >= F.goalHeight;
+          const lim = out ? F.goalHeight + F.postRadius + r + 0.003 : F.goalHeight - r;
+          if (out ? b.y < lim : b.y > lim) {
+            const impact = Math.abs(b.vy);
+            b.y = lim;
+            if (out ? b.vy < 0 : b.vy > 0) {
+              b.vy = -b.vy * (out ? B.netOuterRestitution : B.netRestitution);
+              if (impact > 0.8) events.push({ type: 'net', part: 'top', side: sx, speed: impact });
+            }
+            // сетка сверху натянута с уклоном к полю: мяч на ней не остаётся, а скатывается через перекладину
+            if (out) b.vx -= sx * 5 * h;
+          }
+        }
       }
-      const bx2 = b.x * sx;
-      const inMouth = !walled && Math.abs(b.z) < gHalf && b.y < F.goalHeight;
-      if (bx2 <= halfL) {
-        b.inGoal = false;
-        if (bx2 > halfL - r && !inMouth) {
-          b.x = sx * (halfL - r);
-          if (b.vx * sx > 0) {
-            const impact = b.vx * sx;
+      const inBox = behind && Math.abs(b.z) < gHalf && b.y < F.goalHeight;
+      // торцевой борт — сплошной по всей ширине; внутри ворот перед ним висит задняя сетка
+      const endX = halfL - r - (inBox ? F.netGap : 0);
+      if (b.x * sx > endX) {
+        b.x = sx * endX;
+        if (b.vx * sx > 0) {
+          const impact = b.vx * sx;
+          if (inBox) {
+            b.vx = -sx * Math.min(impact * B.netRestitution, 0.35); b.vz *= 0.5; b.vy *= 0.6; // сетка вбирает удар: мяч остаётся в воротах
+            if (impact > 0.8) events.push({ type: 'net', part: 'back', side: sx, speed: impact });
+          } else {
             b.vx = -b.vx * B.wallRestitution;
             b.vz *= B.wallTangent; b.vy *= B.wallTangent; b.wy *= 0.6;
             if (impact > 0.6) events.push({ type: 'wall', surface: b.y < F.boardHeight ? 'board' : 'fence', speed: impact });
           }
         }
-      } else {
-        // внутри ворот: сетка гасит мяч
-        const e = B.netRestitution;
-        if (Math.abs(b.z) > gHalf - r) { b.z = Math.sign(b.z) * (gHalf - r); if (b.vz * b.z > 0) b.vz = -b.vz * e; b.vx *= 0.6; }
-        if (b.y > F.goalHeight - r) { b.y = F.goalHeight - r; if (b.vy > 0) b.vy = -b.vy * e; }
-        if (bx2 > halfL + F.goalDepth - r) { b.x = sx * (halfL + F.goalDepth - r); if (b.vx * sx > 0) { b.vx = -b.vx * e; b.vz *= 0.5; } }
-        if (bx2 - r > halfL && !b.inGoal) { b.inGoal = true; events.push({ type: 'goal_line', side: sx }); }
       }
+      // гол: весь мяч за линией внутри рамы
+      if (!behind || walled) b.inGoal = false;
+      else if (inBox && b.x * sx - r > gx && !b.inGoal) { b.inGoal = true; events.push({ type: 'goal_line', side: sx }); }
     }
 
     if (bodyHook) bodyHook(b, h);

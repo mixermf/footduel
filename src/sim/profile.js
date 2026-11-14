@@ -7,7 +7,9 @@ export function createProfile() {
     simHz: 120,
     field: {
       length: 18, width: 10,
-      goalWidth: 3, goalHeight: 2.2, goalDepth: 1.1, postRadius: 0.06,
+      goalWidth: 3, goalHeight: 2.2, postRadius: 0.06,
+      netGap: 0.25, // задняя сетка висит перед бортом на этом расстоянии: ей есть куда прогибаться
+      goalInset: 0.8, // рама ворот стоит в поле на этом расстоянии от торцевого борта; сетка тянется от рамы до борта
       reboundWall: false, // песочница: щит вместо правых ворот — мяч всегда возвращается в игру
       boardHeight: 1.0, // сплошной борт
       fenceHeight: 5.0, // сетка-ограждение и сетчатый потолок: физическая высота возврата высоких мячей
@@ -18,7 +20,7 @@ export function createProfile() {
       rollDecel: 2.2, rollDrag: 0.25,
       groundRestitution: 0.6, groundTangent: 0.93, restSpeed: 0.8,
       wallRestitution: 0.68, wallTangent: 0.92,
-      postRestitution: 0.6, netRestitution: 0.12,
+      postRestitution: 0.62, netRestitution: 0.12, netOuterRestitution: 0.22,
       spinDecayAir: 0.4, spinDecayGround: 3.0,
     },
     player: {

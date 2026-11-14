@@ -1,7 +1,7 @@
 // Общие для клиента и сервера константы сетевой игры.
 // Схема: сервер авторитетен и считает симуляцию; клиент шлёт ввод по шагам, предсказывает своего игрока
 // и доигрывает неподтверждённый ввод поверх каждого полученного состояния.
-export const NET_VERSION = 3;
+export const NET_VERSION = 4;
 export const SNAP_EVERY = 4; // состояние рассылается раз в 4 шага симуляции (30 раз/с при 120 Гц)
 export const MAX_BUF = 6; // очередь ввода на сервере длиннее этого сжимается: задержка не накапливается
 export const STARVE_TICKS = 30; // столько шагов без ввода — и сервер считает ввод отпущенным
@@ -15,9 +15,9 @@ export const REJOIN_MS = 30000;
 
 // События симуляции, которые сервер пересылает клиентам (звук, HUD, эффекты)
 export const WIRE_EVENTS = new Set(['touch', 'kick', 'receive', 'header', 'body', 'wall', 'post', 'bounce', 'goal',
-  'kick_cancel', 'kick_miss', 'kick_empty', 'control_lost', 'kickoff', 'match_over', 'juggle_start']);
+  'net', 'kick_cancel', 'kick_miss', 'kick_empty', 'control_lost', 'kickoff', 'match_over', 'juggle_start']);
 // События мяча клиент берёт из собственного предсказания (без сетевой задержки), а не с сервера
-export const BALL_EVENTS = new Set(['wall', 'post', 'bounce']);
+export const BALL_EVENTS = new Set(['wall', 'post', 'bounce', 'net']);
 
 export function sanitizeFrame(f) {
   if (!Array.isArray(f) || f.length !== 3) return null;

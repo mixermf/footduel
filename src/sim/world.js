@@ -156,7 +156,7 @@ export class World {
     const b = this.ball, p = this.player, P = this.P, r = P.ball.radius;
     const kinds = [['low', 0.8, 0], ['thigh', 0.9, 0.7], ['low', 0.7, 0], ['chest', 0.95, 1.2], ['high', 1.1, 1.7], ['thigh', 0.85, 0.8]];
     const [kind, t, h] = kinds[this.feedIndex++ % kinds.length];
-    if (fresh) { b.x = -p.side * (P.field.length / 2 - 1.2); b.z = ((this.feedIndex % 3) - 1) * 1.6; b.y = r; b.inGoal = false; }
+    if (fresh) { b.x = -p.side * (P.field.length / 2 - P.field.goalInset - 1.2); b.z = ((this.feedIndex % 3) - 1) * 1.6; b.y = r; b.inGoal = false; }
     const dx = p.x - b.x, dz = p.z - b.z, d = Math.hypot(dx, dz) || 1;
     const tt = Math.max(0.5, t * d / 11), sp = (d / tt) * 1.07;
     b.vx = (dx / d) * sp; b.vz = (dz / d) * sp;
@@ -637,6 +637,13 @@ export class World {
     const maxZ = F.width / 2 - R;
     if (p.z < -maxZ) { p.z = -maxZ; if (p.vz < 0) p.vz = 0; }
     if (p.z > maxZ) { p.z = maxZ; if (p.vz > 0) p.vz = 0; }
+    // ворота стоят в поле: игрок в них не заходит — упирается в раму спереди или в сетку сбоку
+    const gX = F.length / 2 - F.goalInset - R, gZ = F.goalWidth / 2 + R;
+    if (Math.abs(p.x) > gX && Math.abs(p.z) < gZ) {
+      const sgx = p.x < 0 ? -1 : 1, sgz = p.z < 0 ? -1 : 1;
+      if (Math.abs(p.x) - gX < gZ - Math.abs(p.z)) { p.x = sgx * gX; if (p.vx * sgx > 0) p.vx = 0; }
+      else { p.z = sgz * gZ; if (p.vz * sgz < 0) p.vz = 0; }
+    }
   }
 
   // Параметры цикла бега. Ориентиры из биомеханики: частота шагов ~2,7–3,3 Гц, доля опоры в цикле
@@ -835,7 +842,7 @@ export class World {
   // ---------- удар ----------
   _startKick(p, input) {
     const P = this.P, b = this.ball, F = P.field;
-    const gx = -p.side * F.length / 2; // центр атакуемых ворот
+    const gx = -p.side * (F.length / 2 - F.goalInset); // центр атакуемых ворот на их линии
     let ax = gx - b.x, az = 0 - b.z;
     const al = Math.hypot(ax, az) || 1; ax /= al; az /= al;
     const lat = (b.x - p.x) * -az + (b.z - p.z) * ax;
