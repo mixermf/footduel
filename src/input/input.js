@@ -2,21 +2,21 @@
 // Разделены удержание и события нажатия; автоповтор клавиш не создаёт событий.
 
 export const DEFAULT_KEYS = {
-  // стрелки — бег и направление мяча; D — удар, W — ускорение, A — навес (без мяча подкат), S — суперудар (без мяча дотянуться),
+  // стрелки — бег и направление мяча; D — удар, W — ускорение, A — навес (без мяча подкат), Q — суперудар, S — без мяча дотянуться,
   // пробел — чеканка (без мяча прыжок), C — защитная стойка
   up: ['ArrowUp'], down: ['ArrowDown'], left: ['ArrowLeft'], right: ['ArrowRight'],
-  kick: ['KeyD'], sprint: ['KeyW'], lob: ['KeyA'], super: ['KeyS'], jump: ['Space'], guard: ['KeyC'],
-  receive: ['KeyE'], faceGoal: ['KeyQ'],
+  kick: ['KeyD'], sprint: ['KeyW'], lob: ['KeyA'], super: ['KeyQ'], reach: ['KeyS'], jump: ['Space'], guard: ['KeyC'],
+  receive: ['KeyE'], faceGoal: ['KeyX'],
   pause: ['Escape'], confirm: ['Enter'], ballReturn: ['KeyR'], serve: ['KeyF'], wall: ['KeyG'],
 };
 
 // Стандартная раскладка Gamepad API (позиции кнопок)
 export const DEFAULT_PAD = {
-  kick: 2, jump: 3, receive: 0, control: 7, faceGoal: 6, sprint: 5, lob: 1, super: 4,
+  kick: 2, jump: 3, receive: 0, control: 7, faceGoal: 6, sprint: 5, lob: 1, super: 4, reach: 4,
   pause: 9, confirm: 0, back: 1, up: 12, down: 13, left: 14, right: 15,
 };
 
-const STORAGE_KEY = 'soccer-duel-desktop.bindings.v3'; // v3: стрелки — движение, D/W/A/S — действия, C — стойка
+const STORAGE_KEY = 'soccer-duel-desktop.bindings.v4'; // v4: суперудар на Q, дотянуться осталось на S, разворот к воротам на X
 
 export function findConflicts(keys) {
   const seen = new Map(), conflicts = [];
@@ -166,7 +166,7 @@ export class Input {
     out.jumpPressed = edges && p.has('jump');
     out.receivePressed = edges && p.has('receive');
     out.feintPressed = false;
-    out.superPressed = edges && p.has('super'); out.superHeld = this._held('super');
+    out.superPressed = edges && p.has('super'); out.superHeld = this._held('reach'); // удержание — «дотянуться до мяча»
     out.lobPressed = edges && p.has('lob'); out.lobHeld = this._held('lob');
     return out;
   }

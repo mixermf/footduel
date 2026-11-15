@@ -7,7 +7,7 @@
 // reachCm — недотяг стопы; scissor — наибольшая разность высот стоп до контакта и после (ножницы), м;
 // tiltHit — наклон корпуса назад в момент контакта, градусы; lie — наименьшая высота таза, м; upSec — время от приземления до стойки.
 window.bikeProbe = function bikeProbe(cfg = {}) {
-  const c = { h: 2.4, dx: 0, dz: 0.05, hold: 40, stop: null, after: 0, fly: false, vx: 0, ...cfg }; // fly: face the goal (flying side volley), vx: ball speed toward the player
+  const c = { h: 2.4, dx: 0, dz: 0.05, hold: 40, stop: null, after: 0, fly: false, vx: 0, jumpAt: 0, kickAt: 0, ...cfg }; // fly: face the goal (flying side volley), vx: ball speed toward the player
   const g = window.__game, rig = g.rig, B = rig.bones, w = g.world;
   const V = rig.root.position.constructor;
   const wp = (b) => b.getWorldPosition(new V());
@@ -24,7 +24,7 @@ window.bikeProbe = function bikeProbe(cfg = {}) {
   out.sink = 0; out.pelJerk = 0; out.footSlide = 0; out.headMin = 9;
   let hitF = -1, landF = -1, upF = -1, stopLeft = -1, lastPh = '';
   for (let f = 0; f < 260; f++) {
-    drive(() => ({ kickHeld: f < c.hold, kickPressed: f === 0 }));
+    drive(() => ({ kickHeld: f < c.hold, kickPressed: f === c.kickAt, jumpPressed: f === c.jumpAt })); // jumpAt: the jump that allows high-ball kicks (kick.jumpKicks)
     rig._cel = null;
     const k = p.kick, fl = p.fall;
     if (k && (k.bike || k.fly)) out.bike = true;

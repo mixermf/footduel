@@ -385,6 +385,12 @@ export class World {
     }
 
     const kickWaiting = p.kick && (p.kick.phase === 'charge' || p.kick.phase === 'ready');
+    if (P.kick.jumpKicks && p.jumpBuf > 0 && kickWaiting && !p.kick.jumpOk) {
+      // прыжок при зажатом ударе разрешает удары по высокому мячу. Если мяч уже идёт высоко, игрок не прыгает сразу:
+      // толчок произойдёт в расчётный момент, под удар; иначе это обычный прыжок, и бить можно уже из него
+      p.kick.jumpOk = true;
+      if (p.y <= 0 && p.kick.dynamic && this.ball.y > 1.0) { p.jumpBuf = 0; this.events.push({ type: 'kick_armed' }); }
+    }
     if (p.jumpBuf > 0 && p.y <= 0 && (!p.kick || kickWaiting)) {
       p.jumpBuf = 0;
       const b = this.ball, since = (this.tick - p.lastTouchTick) * dt;
@@ -411,7 +417,15 @@ export class World {
   _hasBall(p) {
     if (p.possession || p.juggle) return true;
     const b = this.ball, since = (this.tick - p.lastTouchTick) * this.dt;
-    return (p.lastTouchKind === 'flick' || p.lastTouchKind === 'juggle') && since < 1.4 && b.y > 0.25 && this._ballDist(p) < this.P.juggle.maxDist;
+    const dist = this._ballDist(p);
+    if ((p.lastTouchKind === 'flick' || p.lastTouchKind === 'juggle') && since < 1.4 && b.y > 0.25 && dist < this.P.juggle.maxDist) return true;
+    // the ball is in the air right by the player (after a receive, a bounce, a lofted pass): it is his ball as well -
+    // close now, or coming within reach in under half a second
+    // a low ball further away is still a tackle target (sliding or in the air), and so is any ball once the player has jumped
+    if (p.y > 0 || b.y <= 0.3 || b.y > 2.8 || b.x * p.side < -0.4 || (b.y < 0.75 && dist > 0.9)) return false;
+    const rvx = b.vx - p.vx, rvz = b.vz - p.vz;
+    if (dist < 1.6 && Math.hypot(rvx, rvz) < 6) return true;
+    return Math.hypot(b.x + rvx * 0.45 - p.x, b.z + rvz * 0.45 - p.z) < 1.2 && dist < 3.2;
   }
 
   // ---------- подкат ----------
@@ -469,13 +483,15 @@ export class World {
   }
 
   // Толчок под удар через себя или сбоку в полёте: с этого момента игрок летит и после удара упадёт
-  _takeoff(p, k, pl) {
-    p.vy = pl.jump; p.y = 1e-4; k.jumped = true; k.bike = !!pl.bike; k.fly = pl.fly || 0;
+  // launch = false — игрок уже в прыжке: толчка нет, начинается только полёт под удар
+  _takeoff(p, k, pl, launch = true) {
+    if (launch) { p.vy = pl.jump; p.y = 1e-4; }
+    k.jumped = true; k.bike = !!pl.bike; k.fly = pl.fly || 0;
     if (k.fly) k.footSide = k.fly;
     if (k.bike) p.fall = { kind: 'back', phase: 'air', t: 0, k: 0, roll: 0, yaw: Math.atan2(-k.az, -k.ax), ux: -k.ax, uz: -k.az, kickFoot: k.footSide > 0 ? 1 : 0 };
     // сбоку в полёте: корпус ложится поперёк линии удара головой от бьющей ноги
     else if (k.fly) p.fall = { kind: 'side', phase: 'air', t: 0, k: 0, roll: 0, side: k.fly, spinT: 0, spinDur: this.P.fall.pose, yaw: Math.atan2(k.az, k.ax), yaw0: Math.atan2(k.az, k.ax), ax0: k.ax, az0: k.az, ux: -k.az * k.fly, uz: k.ax * k.fly, kickFoot: k.fly > 0 ? 1 : 0 };
-    this.events.push({ type: 'jump', strike: true });
+    if (launch) this.events.push({ type: 'jump', strike: true });
   }
 
   // ---------- падение после удара через себя ----------
@@ -1231,6 +1247,7 @@ export class World {
     const sup = type === 'super';
     if (p.reach) this._endReach(p);
     p.kick = {
+      jumpOk: p.y > 0, // удар начат уже в прыжке
       type, phase: sup ? 'ready' : 'charge', t: 0, charge: sup ? 1 : 0, released: sup, waitT: 0,
       ax, az, gx, aimLat: 0, aimHigh: 0,
       footSide: lat > -0.05 ? 1 : -1,
@@ -1280,6 +1297,7 @@ export class World {
           const rx = -k.az, rz = k.ax;
           k.phase = 'windup'; k.t = 0; k.dyn = true; k.offset = 0; k.high = pl.high; k.bike = !!pl.bike; k.fly = pl.fly || 0;
           if (k.fly) k.footSide = k.fly;
+          if ((k.fly || k.bike) && !p.fall && p.y > 0) this._takeoff(p, k, pl, false); // удар из уже начатого прыжка
           k.swingDur = swingDur;
           k.windDur = Math.max(0.04, pl.t - swingDur);
           const foot = p.feet[k.footSide > 0 ? 1 : 0];
@@ -1403,43 +1421,48 @@ export class World {
     const R = PP.radius, minX = p.side < 0 ? -F.length / 2 + R : R + 0.05, maxX = p.side < 0 ? -R - 0.05 : F.length / 2 - R, maxZ = F.width / 2 - R;
     let best = null, bestCost = 1e9;
     // игрок спиной к воротам: мяч в воздухе рядом можно пробить через себя, не разворачиваясь
-    const backToGoal = !air && Math.cos(p.yaw) * k.ax + Math.sin(p.yaw) * k.az < -0.3;
+    const backToGoal = Math.cos(p.yaw) * k.ax + Math.sin(p.yaw) * k.az < -0.3;
+    // удары по высокому мячу — только из собственного прыжка игрока (kick.jumpKicks): без него план ждёт, пока мяч опустится
+    const own = !K.jumpKicks || k.jumpOk;
     for (let i = 1; i <= n; i++) {
       stepBall(c, h, P, ev, null); ev.length = 0;
       const t = i * h;
       if (t < 0.1) continue;
       if (t > bestCost) break;
-      if (backToGoal && c.y >= K.bikeMin && t >= K.bikeSwing + 0.17) { // time for the windup and the scissors
-        const pyB = Math.max(K.bikeHop, c.y - K.bikeReach);
+      // высота игрока над покрытием к моменту t, если он уже в прыжке: тогда новые толчки не нужны, удар идёт из этого прыжка
+      const pyAir = air ? p.y + p.vy * t - 0.5 * g * t * t : 0;
+      const airReach = (sx, sz) => Math.hypot(sx - (p.x + p.vx * t), sz - (p.z + p.vz * t)) <= 0.3 + 0.5 * PP.airControl * t * t;
+      if (own && backToGoal && k.type !== 'lob' && c.y >= K.bikeMin && t >= K.bikeSwing + 0.17 && (!air || pyAir >= 0.12)) { // время на замах и ножницы
+        const pyB = air ? pyAir : Math.max(K.bikeHop, c.y - K.bikeReach);
         const vyB = Math.sqrt(2 * g * pyB), tUp = vyB / g;
-        const jump = t >= tUp ? vyB : (pyB + 0.5 * g * t * t) / t, jumpAt = t >= tUp ? t - tUp : 0;
+        const jump = air ? 0 : t >= tUp ? vyB : (pyB + 0.5 * g * t * t) / t, jumpAt = air ? 0 : t >= tUp ? t - tUp : 0;
         // тело — чуть ближе к воротам, чем мяч: стопа приходит к мячу снизу-спереди и отправляет его назад через голову
         const sx0 = c.x + k.ax * 0.12, sz0 = c.z + k.az * 0.12;
         const sx = clamp(sx0, minX, maxX), sz = clamp(sz0, -maxZ, maxZ);
-        const reachOk = jumpAt < 0.1
+        const reachOk = air ? airReach(sx, sz) : jumpAt < 0.1
           ? Math.hypot(sx - (p.x + p.vx * t), sz - (p.z + p.vz * t)) <= 0.3
           : Math.hypot(sx - p.x, sz - p.z) <= 0.15 + K.strikeSpeed * Math.max(0, t - 0.04);
-        // the ball must be high enough above the take-off level for an almost straight leg: a lower ball is not a bicycle kick
-        if (c.y - pyB >= K.bikeLeg && pyB <= K.jumpReach && jump <= K.strikeJumpMax && Math.hypot(sx - sx0, sz - sz0) <= 0.12 && reachOk) {
+        // мяч должен быть достаточно высоко над уровнем толчка — под почти прямую ногу; ниже это уже не удар через себя
+        if (c.y - pyB >= K.bikeLeg && c.y - pyB <= K.bikeReach + 0.12 && pyB <= K.jumpReach && jump <= K.strikeJumpMax && Math.hypot(sx - sx0, sz - sz0) <= 0.12 && reachOk) {
           const cost = t - 0.12; // через себя быстрее, чем разворачиваться к воротам
           if (cost < bestCost) { bestCost = cost; best = { t, sx, sz, bx: c.x, by: c.y, bz: c.z, hRel: c.y - pyB, high: true, jump, jumpAt, bike: true }; }
           continue;
         }
       }
-      if (!backToGoal && !air && c.y >= K.flyMin && t >= K.flySwing + 0.17) {
+      if (own && !backToGoal && k.type !== 'lob' && c.y >= K.flyMin && t >= K.flySwing + 0.17 && (!air || pyAir >= 0.12)) { // навес — мягкое касание: ударов в полёте для него нет
         // высокий мяч лицом к воротам: удар сбоку в полёте. Нога поднята выше таза, корпус завален в другую сторону,
         // поэтому мяч стоит сбоку от таза — тем ближе, чем он выше
-        const pyS = Math.max(K.flyHop, c.y - K.flyReach), hS = c.y - pyS;
-        if (hS >= K.flyLeg && pyS <= K.jumpReach) {
+        const pyS = air ? pyAir : Math.max(K.flyHop, c.y - K.flyReach), hS = c.y - pyS;
+        if (hS >= K.flyLeg && hS <= K.flyReach + 0.12 && pyS <= K.jumpReach) {
           // удар идёт на взлёте: толчок рассчитан на высоту выше точки контакта, tUp — время от толчка до контакта
           const vyS = Math.sqrt(2 * g * (pyS + K.flyRise)), tUp = (vyS - Math.sqrt(vyS * vyS - 2 * g * pyS)) / g;
-          const jump = t >= tUp ? vyS : (pyS + 0.5 * g * t * t) / t, jumpAt = t >= tUp ? t - tUp : 0;
+          const jump = air ? 0 : t >= tUp ? vyS : (pyS + 0.5 * g * t * t) / t, jumpAt = air ? 0 : t >= tUp ? t - tUp : 0;
           // в полёте таз идёт низко (корпус лежит боком), поэтому нога смотрит к мячу круче
           const v = hS - 0.8, lat = Math.sqrt(Math.max(0.3 * 0.3, 0.72 * 0.72 - v * v));
           const s = k.fly || ((c.x - p.x) * rx + (c.z - p.z) * rz >= 0 ? 1 : -1); // бьёт нога с той стороны, где мяч
           const sx0 = c.x - k.ax * 0.15 - rx * s * lat, sz0 = c.z - k.az * 0.15 - rz * s * lat;
           const sx = clamp(sx0, minX, maxX), sz = clamp(sz0, -maxZ, maxZ);
-          const reachOk = jumpAt < 0.1
+          const reachOk = air ? airReach(sx, sz) : jumpAt < 0.1
             ? Math.hypot(sx - (p.x + p.vx * t), sz - (p.z + p.vz * t)) <= 0.3
             : Math.hypot(sx - p.x, sz - p.z) <= 0.15 + K.strikeSpeed * Math.max(0, t - 0.04);
           if (jump <= K.strikeJumpMax && Math.hypot(sx - sx0, sz - sz0) <= 0.12 && reachOk) {
@@ -1452,8 +1475,8 @@ export class World {
       let py = air ? Math.max(0, p.y + p.vy * t - 0.5 * g * t * t) : 0, jump = 0, jumpAt = 0, late = 0;
       let hRel = c.y - py;
       if (hRel > K.standReach) {
-        if (air) continue;
-        if (!backToGoal && c.y >= K.flyMin) late = 0.5; // a high ball is hit sideways in flight; the vertical jump stays only as a last resort
+        if (air || !own) continue;
+        if (!backToGoal && k.type !== 'lob' && c.y >= K.flyMin) late = 0.5; // a high ball is hit sideways in flight; the vertical jump stays only as a last resort
         const need = c.y - (K.standReach - 0.1);
         if (need > K.jumpReach) continue;
         const vy = Math.sqrt(2 * g * need), tUp = vy / g;

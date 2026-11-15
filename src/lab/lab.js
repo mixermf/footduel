@@ -59,6 +59,7 @@ export class Lab {
     btn('Точки стоп', () => { this.showFeet = !this.showFeet; }, 'feet');
     btn('Клипы набора', () => { g.rig.packClips = g.rig2.packClips = !g.rig.packClips; }, 'pack'); // сравнение: клипы Mocap Pack / прежние
     btn('Празднование', () => g.rig.celebrate());
+    btn('Высокий мяч: только из прыжка', () => { g.world.P.kick.jumpKicks = !g.world.P.kick.jumpKicks; }, 'jumpKicks'); // выкл — прежние условия: игрок выпрыгивает сам
     h('Запись');
     btn('Повтор с последнего сброса', () => g.startReplay());
     btn('Скачать журнал', () => g.exportLog());

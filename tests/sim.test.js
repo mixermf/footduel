@@ -305,6 +305,7 @@ test('цикл бега: стопы строго чередуются, шаги 
 // ---------- удар по летящему мячу в касание ----------
 function strike(scn, { pressAt = 0.45, hold = 0.6, jumpAt = null, setup = null } = {}) {
   const h = harness(scn);
+  h.w.P.kick.jumpKicks = false; // legacy conditions (the rollback switch): the player jumps for a high ball on his own
   if (setup) setup(h.w);
   let t = 0;
   const seg = (sec) => { h.run(sec); t += sec; };
@@ -548,6 +549,7 @@ test('удар через себя: спиной к воротам по мячу
   for (const [h, dx] of [[2.5, -0.3], [2.8, 0.2]]) {
     const w = new World(createProfile(), { seed: 7 });
     w.reset('motor');
+    w.P.kick.jumpKicks = false; // legacy conditions
     const p = w.player, b = w.ball;
     for (let i = 0; i < 90; i++) w.step(inp({ mx: -1 }));
     for (let i = 0; i < 60; i++) w.step(inp());

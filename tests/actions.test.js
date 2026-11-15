@@ -143,7 +143,7 @@ test('bicycle kick: scissors in the air, fall on the back or on the side, get up
     let xLie = null;
     for (let i = 0; i < 420; i++) {
       // the player mashes movement and kick the whole time: nothing may happen until he is up
-      w.step(inp({ kickHeld: i < 40, kickPressed: i === 0 || i === 150, mx: i > 60 ? 1 : 0, lobPressed: i === 160 }));
+      w.step(inp({ kickHeld: i < 40, kickPressed: i === 0 || i === 150, jumpPressed: i === 2, mx: i > 60 ? 1 : 0, lobPressed: i === 160 }));
       const k = p.kick, fl = p.fall;
       for (const e of w.events) { if (e.type === 'kick') r.kick = e; if (e.type === 'fall') { r.fell = true; r.landAt = i; r.roll = e.roll; } }
       if (fl && fl.phase === 'air' && k) {
@@ -188,14 +188,14 @@ test('slide tackle: the next one is available right after getting up', () => {
 });
 
 test('flying side volley: low take-off, kick with the body laid sideways; the leg carries on, the body turns and lands on the other leg', () => {
-  for (const [h, dx, dz, vx] of [[2.3, 0.5, 0.3, 0], [2.0, 0.6, -0.4, 0], [2.6, 2.5, 0.5, 5]]) {
+  for (const [h, dx, dz, vx] of [[2.3, 0.5, 0.3, 0], [2.15, 0.6, -0.4, 0], [2.6, 2.5, 0.5, 5]]) {
     const w = make('motor'), p = w.player, b = w.ball;
     for (let i = 0; i < 20; i++) w.step(inp());
     b.x = p.x + dx; b.z = p.z + dz; b.y = h; b.vx = -vx; b.vy = b.vz = 0;
     const yaw0 = p.yaw;
     let kick = null, top = 0, side = 0, footH = 0, byHit = 0, hitAt = -1, landAt = -1, upAt = -1, first = -1, kf = -1, carry = 0, fell = false, kx = 0;
     for (let i = 0; i < 420; i++) {
-      w.step(inp({ kickHeld: i < 60, kickPressed: i === 0, mx: i > 80 ? -1 : 0 }));
+      w.step(inp({ kickHeld: i < 60, kickPressed: i === 0, jumpPressed: i === 0, mx: i > 80 ? -1 : 0 }));
       top = Math.max(top, p.y);
       const fl = p.fall;
       for (const e of w.events) {
@@ -228,7 +228,7 @@ test('flying side volley: low take-off, kick with the body laid sideways; the le
   for (let i = 0; i < 20; i++) w0.step(inp());
   b0.x = q.x + 0.5; b0.z = q.z + 0.3; b0.y = 2.3; b0.vx = b0.vy = b0.vz = 0;
   const y0 = q.yaw;
-  for (let i = 0; i < 300; i++) w0.step(inp({ kickHeld: i < 60, kickPressed: i === 0 }));
+  for (let i = 0; i < 300; i++) w0.step(inp({ kickHeld: i < 60, kickPressed: i === 0, jumpPressed: i === 0 }));
   const d = Math.atan2(Math.sin(q.yaw - y0), Math.cos(q.yaw - y0));
   assert.ok(Math.abs(d) > 2.6, 'the body ends turned almost fully around: ' + d.toFixed(2));
   // a ball at hip height is still an ordinary volley, without the flight
@@ -247,7 +247,7 @@ test('flying side volley: arrows do nothing until touchdown, the player does not
     b.x = p.x + 0.5; b.z = p.z + 0.3; b.y = 2.3; b.vx = b.vy = b.vz = 0;
     const r = { hit: null, land: null, landAt: -1, freeAt: -1, spunAt: -1, hitAt: -1, yawHit: 0 };
     for (let i = 0; i < 260; i++) {
-      w.step(inp({ kickHeld: i < 60, kickPressed: i === 0, mx, mz }));
+      w.step(inp({ kickHeld: i < 60, kickPressed: i === 0, jumpPressed: i === 0, mx, mz }));
       for (const e of w.events) if (e.type === 'kick') { r.hit = [p.x, p.z]; r.hitAt = i; r.yawHit = p.yaw; }
       const fl = p.fall;
       if (r.hitAt >= 0 && r.spunAt < 0 && Math.abs(Math.atan2(Math.sin(p.yaw - r.yawHit), Math.cos(p.yaw - r.yawHit))) > 2.6) r.spunAt = i;
@@ -266,4 +266,71 @@ test('flying side volley: arrows do nothing until touchdown, the player does not
   assert.ok((idle.spunAt - idle.hitAt) / 120 < 0.4, 'the turn is done within 0.4 s of the kick: ' + ((idle.spunAt - idle.hitAt) / 120).toFixed(2));
   assert.ok(idle.spunAt < idle.landAt, 'and before touchdown');
   assert.ok((idle.freeAt - idle.landAt) / 120 > 0.4, 'without a command the low landing stance plays out');
+});
+
+test('lob with the ball in the air: a ball bouncing or dropping by the player is his ball - A lobs it on the volley, no slide', () => {
+  const cases = [
+    ['bouncing beside', (p, b) => { b.x = p.x + 0.5; b.z = p.z; b.y = 0.8; b.vx = b.vz = 0; b.vy = 1; }],
+    ['dropping from 1.6 m', (p, b) => { b.x = p.x + 0.4; b.z = p.z + 0.1; b.y = 1.6; b.vx = b.vy = b.vz = 0; }],
+    ['high above', (p, b) => { b.x = p.x + 0.4; b.z = p.z + 0.2; b.y = 2.4; b.vx = b.vy = b.vz = 0; }],
+    ['lofted pass arriving', (p, b) => { b.x = p.x + 2.5; b.z = p.z; b.y = 1.0; b.vx = -3.5; b.vy = 2.5; b.vz = 0; }],
+  ];
+  for (const [name, setup] of cases) {
+    const w = make('motor'), p = w.player, b = w.ball;
+    for (let i = 0; i < 20; i++) w.step(inp());
+    setup(p, b);
+    let kick = null, slid = false, apex = 0, x0 = 0;
+    for (let i = 0; i < 360; i++) {
+      w.step(inp({ lobPressed: i === 0, lobHeld: i < 30 }));
+      if (p.slide) slid = true;
+      for (const e of w.events) if (e.type === 'kick') { kick = e; x0 = b.x; }
+      if (kick) apex = Math.max(apex, b.y);
+    }
+    assert.equal(slid, false, name + ': no slide tackle');
+    assert.ok(kick && kick.kind === 'lob' && kick.volley, name + ': lob on the volley');
+    assert.ok(!kick.fly && !kick.bike && p.fall === null, name + ': a lob is not a flying kick');
+    assert.ok(apex > 2.5 && b.x > x0 + 2, name + `: the ball goes up and forward (apex ${apex.toFixed(1)})`);
+  }
+  // a low ball two metres away is still a tackle
+  const w = make('motor'), p = w.player, b = w.ball;
+  for (let i = 0; i < 20; i++) w.step(inp());
+  b.x = p.x + 2; b.z = p.z; b.y = 0.5; b.vx = b.vy = b.vz = 0;
+  w.step(inp({ lobPressed: true }));
+  assert.ok(p.slide && !p.kick);
+});
+
+test('high-ball kicks need the player\'s own jump: kick alone waits for the ball, kick + jump or a kick from a jump goes for it; the switch restores the old rule', () => {
+  const run = ({ jumpAt = -1, kickAt = 0, legacy = false, back = false, h = 2.3 }) => {
+    const w = make('motor'), p = w.player, b = w.ball;
+    if (legacy) w.P.kick.jumpKicks = false;
+    if (back) { for (let i = 0; i < 90; i++) w.step(inp({ mx: -1 })); for (let i = 0; i < 60; i++) w.step(inp()); }
+    else for (let i = 0; i < 20; i++) w.step(inp());
+    b.x = p.x + (back ? 0 : 0.5); b.z = p.z + (back ? 0.05 : 0.3); b.y = h; b.vx = b.vy = b.vz = 0;
+    const r = { kick: null, top: 0, byHit: 0, armed: false };
+    for (let i = 0; i < 300; i++) {
+      w.step(inp({ kickHeld: i >= kickAt && i < kickAt + 70, kickPressed: i === kickAt, jumpPressed: i === jumpAt }));
+      r.top = Math.max(r.top, p.y);
+      for (const e of w.events) { if (e.type === 'kick' && !r.kick) { r.kick = e; r.byHit = b.y; } if (e.type === 'kick_armed') r.armed = true; }
+    }
+    return r;
+  };
+  // kick alone: no flight, no jump - the ball is met when it has come down
+  const plain = run({});
+  assert.ok(plain.kick && !plain.kick.fly && !plain.kick.bike && !plain.kick.jump, 'kick without a jump stays on the ground');
+  assert.equal(plain.top, 0, 'no take-off');
+  assert.ok(plain.byHit < 1.0, 'the ball is struck low: ' + plain.byHit.toFixed(2));
+  // kick held, then jump: the flying side volley, the take-off is timed by the game
+  const armed = run({ jumpAt: 6 });
+  assert.ok(armed.armed && armed.kick && armed.kick.fly, 'kick + jump: flying side volley');
+  // already in a jump, then kick: the same kick out of that jump
+  const fromJump = run({ jumpAt: 0, kickAt: 8, h: 2.5 });
+  assert.ok(fromJump.kick && (fromJump.kick.fly || fromJump.kick.jump), 'jump first, then kick: a kick in the air');
+  assert.ok(fromJump.byHit > 1.2, 'the ball is met high: ' + fromJump.byHit.toFixed(2));
+  // back to goal: the bicycle kick needs the jump as well
+  assert.ok(!run({ back: true, h: 2.6 }).kick?.bike, 'no bicycle kick without a jump');
+  assert.ok(run({ back: true, h: 2.6, jumpAt: 4 }).kick?.bike, 'bicycle kick with kick + jump');
+  // the switch: old conditions, one button is enough
+  const old = run({ legacy: true });
+  assert.ok(old.kick && old.kick.fly, 'jumpKicks off: the flying side volley on the kick button alone');
+  assert.ok(run({ legacy: true, back: true, h: 2.6 }).kick?.bike, 'jumpKicks off: the bicycle kick on the kick button alone');
 });

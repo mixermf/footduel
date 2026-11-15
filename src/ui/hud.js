@@ -61,7 +61,7 @@ export class Hud {
     const title = net ? `Сеть${net.lobby ? ' · ' + net.lobby.code : ''} · пинг ${Math.round(net.rtt)} мс${net.rtt > 110 ? ' (высокий)' : ''}` : 'Песочница';
     const st = `${title} · <b>${mode}</b> · ${phase}${extra ? ' · ' + extra : ''}`;
     if (st !== this._stateKey) { this._stateKey = st; this.state.innerHTML = st; }
-    const has = !!(p.possession || p.juggle);
+    const has = world._hasBall(p); // тот же признак, по которому симуляция выбирает действие кнопок
     const hk = input.lastDevice + JSON.stringify(input.keys) + (net ? 'n' : 's') + (has ? 'b' : '');
     if (hk !== this._hintKey) {
       this._hintKey = hk;
@@ -71,7 +71,7 @@ export class Hud {
       // подсказка зависит от того, у игрока ли мяч: те же кнопки делают разное
       this.hint.innerHTML = (has
         ? `<b>С мячом:</b> ${move} бег и направление · ${h('kick')} удар · ${h('lob')} навес · ${h('super')} суперудар · ${h('jump')} чеканка · ${h('sprint')} ускорение`
-        : `<b>Без мяча:</b> ${move} бег · ${h('kick')} удар · ${h('lob')} подкат · ${h('super')} дотянуться · ${h('jump')} прыжок · ${guard} стойка · ${h('sprint')} ускорение`)
+        : `<b>Без мяча:</b> ${move} бег · ${h('kick')} удар · ${h('lob')} подкат · ${h('reach')} дотянуться · ${h('jump')} прыжок · ${guard} стойка · ${h('sprint')} ускорение`)
         + ` · ${h('pause')} пауза`
         + (input.lastDevice === 'keyboard' && !net ? ' · <kbd>R</kbd> мяч · <kbd>F</kbd> подача · <kbd>G</kbd> щит' : '');
     }
