@@ -10,13 +10,23 @@ import kick from '../../assets/mocap/kick.json';
 import strikeJog from '../../assets/mocap/strike-jog.json';
 import receive from '../../assets/mocap/receive.json';
 
-export const CLIPS = { idle, jogForward, jogBackward, jogLeft, jogRight, kick, strikeJog, receive };
+// клипы набора «Mocap Pack 05 Soccer» (импорт scripts/convert-soccer-pack.mjs)
+import packKickSide from '../../assets/mocap/pack-kick-side.json';
+import packKickPower from '../../assets/mocap/pack-kick-power.json';
+import packGuard from '../../assets/mocap/pack-guard.json';
+import packJuggle from '../../assets/mocap/pack-juggle.json';
+import packCelebrate from '../../assets/mocap/pack-celebrate.json';
+
+export const CLIPS = { idle, jogForward, jogBackward, jogLeft, jogRight, kick, strikeJog, receive, packKickSide, packKickPower, packGuard, packJuggle, packCelebrate };
 export const BONES = idle.bones;
 const INDEX = Object.fromEntries(BONES.map((b, i) => [b, i]));
 // зеркальная пара кости (для удара другой ногой)
 const MIRROR = BONES.map((b) => INDEX[b.startsWith('Left') ? 'Right' + b.slice(4) : b.startsWith('Right') ? 'Left' + b.slice(5) : b]);
 
 const _a = new THREE.Quaternion(), _b = new THREE.Quaternion();
+
+// Верх тела для ходьбы: руки целиком, плечи и корпус частично. Ноги ставит IK, таз остаётся от клипа бега.
+export const UPPER_BODY = Float32Array.from(BONES, (b) => (/Arm|Hand/.test(b) ? 1 : /Shoulder/.test(b) ? 0.7 : /Spine|Neck|Head/.test(b) ? 0.5 : b === 'Hips' ? 0.3 : 0));
 
 // Накопитель смешивания: взвешенная сумма кватернионов с приведением к одной полусфере
 export class PoseBlend {
@@ -30,7 +40,8 @@ export class PoseBlend {
   reset() { this.acc.fill(0); this.hips.set(0, 0, 0); this.w = 0; }
 
   // t — секунды; для зацикленных клипов время берётся по модулю. mirror — отразить слева направо.
-  add(clip, t, weight, mirror = false) {
+  // mask — вес по костям (см. UPPER_BODY): клип добавляет только повороты, таз остаётся от основных клипов.
+  add(clip, t, weight, mirror = false, mask = null) {
     if (weight <= 1e-4) return;
     const n = clip.frames, B = BONES.length;
     let f = t * clip.fps;
@@ -43,10 +54,12 @@ export class PoseBlend {
       _a.set(Q[o0], Q[o0 + 1], Q[o0 + 2], Q[o0 + 3]); _b.set(Q[o1], Q[o1 + 1], Q[o1 + 2], Q[o1 + 3]);
       _a.slerp(_b, k);
       if (mirror) { _a.y = -_a.y; _a.z = -_a.z; }
-      const o = b * 4;
-      const sign = acc[o] * _a.x + acc[o + 1] * _a.y + acc[o + 2] * _a.z + acc[o + 3] * _a.w < 0 ? -weight : weight;
+      const o = b * 4, wb = mask ? weight * mask[b] : weight;
+      if (wb <= 0) continue;
+      const sign = acc[o] * _a.x + acc[o + 1] * _a.y + acc[o + 2] * _a.z + acc[o + 3] * _a.w < 0 ? -wb : wb;
       acc[o] += _a.x * sign; acc[o + 1] += _a.y * sign; acc[o + 2] += _a.z * sign; acc[o + 3] += _a.w * sign;
     }
+    if (mask) return;
     const H = clip.hips, h0 = i0 * 3, h1 = i1 * 3;
     const hx = H[h0] + (H[h1] - H[h0]) * k, hy = H[h0 + 1] + (H[h1 + 1] - H[h0 + 1]) * k, hz = H[h0 + 2] + (H[h1 + 2] - H[h0 + 2]) * k;
     this.hips.x += (mirror ? -hx : hx) * weight; this.hips.y += hy * weight; this.hips.z += hz * weight;
@@ -65,6 +78,16 @@ export class PoseBlend {
   }
 
   get(name) { return this.q[INDEX[name]]; }
+}
+
+// Голеностоп из клипа удара: положение относительно тазобедренного сустава в долях длины ноги, оси клипа.
+// foot: 0 — левая, 1 — правая нога персонажа; mirror — клип отражён (бьёт другая нога).
+export function clipFoot(clip, t, foot, mirror, out) {
+  const n = clip.frames, f = Math.max(0, Math.min(n - 1, t * clip.fps)), i0 = Math.floor(f), i1 = Math.min(n - 1, i0 + 1), k = f - i0;
+  const s = (mirror ? 1 - foot : foot) * 3, o0 = i0 * 6 + s, o1 = i1 * 6 + s, F = clip.feet;
+  out.set(F[o0] + (F[o1] - F[o0]) * k, F[o0 + 1] + (F[o1 + 1] - F[o0 + 1]) * k, F[o0 + 2] + (F[o1 + 2] - F[o0 + 2]) * k);
+  if (mirror) out.x = -out.x;
+  return out;
 }
 
 // Фаза клипа, в которой левая стопа встаёт на покрытие: симуляция считает фазу шага от постановки левой

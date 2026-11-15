@@ -1,0 +1,67 @@
+[
+ {
+  "name": "pack-kick-side",
+  "source": "08_Side_Foot_Kick.fbx 0.55–2 с",
+  "frames": 45,
+  "sec": 1.4667,
+  "loop": false,
+  "contact": 0.8417,
+  "kickFoot": "R",
+  "footPeak": 4.9919,
+  "refYawDeg": 4,
+  "hipY": "0.8885..1.0013",
+  "kb": 29
+ },
+ {
+  "name": "pack-kick-power",
+  "source": "09_Power_Kick.fbx 1.5–3.15 с",
+  "frames": 51,
+  "sec": 1.6667,
+  "loop": false,
+  "contact": 1.0833,
+  "kickFoot": "L",
+  "footPeak": 10.4279,
+  "refYawDeg": -15,
+  "hipY": "0.882..1.1677",
+  "kb": 32
+ },
+ {
+  "name": "pack-guard",
+  "source": "18_Defending_01.fbx 0.5–4.4 с",
+  "frames": 118,
+  "sec": 3.9333,
+  "loop": true,
+  "contact": 0,
+  "kickFoot": "",
+  "footPeak": 0,
+  "refYawDeg": 17,
+  "hipY": "0.8582..0.9634",
+  "kb": 68
+ },
+ {
+  "name": "pack-juggle",
+  "source": "04_Juggling_01.fbx 1.6–12 с",
+  "frames": 313,
+  "sec": 10.4333,
+  "loop": true,
+  "contact": 0,
+  "kickFoot": "",
+  "footPeak": 0,
+  "refYawDeg": 2,
+  "hipY": "0.9084..1.0201",
+  "kb": 182
+ },
+ {
+  "name": "pack-celebrate",
+  "source": "13_Goal_Celebration_02.fbx 0.2–3.3 с",
+  "frames": 94,
+  "sec": 3.1,
+  "loop": false,
+  "contact": 0,
+  "kickFoot": "",
+  "footPeak": 0,
+  "refYawDeg": 7,
+  "hipY": "0.9042..0.9894",
+  "kb": 56
+ }
+]

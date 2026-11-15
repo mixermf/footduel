@@ -393,7 +393,8 @@ test('защитная стойка: лицом к мячу, приставно�
   assert.equal(p.guard, true);
   assert.equal(p.mode, 'guard');
   const sp = Math.hypot(p.vx, p.vz);
-  assert.ok(Math.abs(sp - G.speed) < 0.1, 'скорость приставного шага ' + sp.toFixed(2));
+  // движение наискось от мяча: скорость между отходом спиной и приставным шагом вбок
+  assert.ok(sp <= G.speed + 0.1 && sp >= G.backSpeed - 0.1, 'скорость приставного шага ' + sp.toFixed(2));
   const toBall = Math.atan2(w.ball.z - p.z, w.ball.x - p.x);
   assert.ok(Math.abs(Math.atan2(Math.sin(toBall - p.yaw), Math.cos(toBall - p.yaw))) < 0.2, 'корпус развёрнут к мячу, а не по ходу движения');
   for (let i = 0; i < 120; i++) w.step(inp({ guardHeld: true }));
@@ -405,6 +406,47 @@ test('защитная стойка: лицом к мячу, приставно�
   for (let i = 0; i < 30; i++) w.step(inp({ guardHeld: true }));
   assert.equal(w.player.possession, true);
   assert.equal(w.player.guard, false, 'с мячом стойка не включается');
+});
+
+test('стойка: спиной от мяча — медленнее и короткими шагами; мяч у своих ворот — разворот по ходу и обычный бег', () => {
+  const setup = (px, bx) => {
+    const w = new World(createProfile(), { seed: 4 });
+    w.reset('motor');
+    w.player.x = px; w.player.z = 0; w._placeFeet(w.player);
+    const run = (n, o) => { for (let i = 0; i < n; i++) { Object.assign(w.ball, { x: bx, z: 0, y: w.P.ball.radius, vx: 0, vy: 0, vz: 0 }); w.step(inp(o)); } };
+    return { w, p: w.player, run };
+  };
+  // мяч впереди (к чужим воротам), игрок отходит к своим: пятится лицом к мячу
+  let { w, p, run } = setup(-2, 0);
+  const G = w.P.guard;
+  run(120, { guardHeld: true, mx: -1 });
+  assert.equal(p.guard, true, 'при отходе к своим воротам стойка сохраняется');
+  assert.ok(Math.abs(Math.hypot(p.vx, p.vz) - G.backSpeed) < 0.1, 'скорость отхода спиной ' + Math.hypot(p.vx, p.vz).toFixed(2));
+  assert.ok(Math.abs(p.yaw) < 0.2 && p.vx < -1.5, 'корпус к мячу, движение спиной вперёд');
+  const steps = [];
+  let prev = p.feet.map((f) => f.planted);
+  for (let i = 0; i < 240; i++) {
+    run(1, { guardHeld: true, mx: -1 });
+    p.feet.forEach((f, k) => { if (f.planted && !prev[k]) steps.push({ k, x: f.x }); });
+    prev = p.feet.map((f) => f.planted);
+    if (p.x < -8) break;
+  }
+  const lens = steps.slice(1).map((s, i) => Math.abs(s.x - steps[i].x));
+  assert.ok(lens.length >= 3 && Math.max(...lens) < 0.65, 'шаги спиной короткие: ' + lens.map((l) => l.toFixed(2)).join(','));
+  // вбок от мяча — прежний приставной шаг
+  ({ w, p, run } = setup(-3, 0));
+  run(50, { guardHeld: true, mz: 1 });
+  assert.ok(Math.hypot(p.vx, p.vz) > G.speed - 0.25, 'приставной шаг вбок не замедлен: ' + Math.hypot(p.vx, p.vz).toFixed(2));
+  // мяч остался между игроком и его воротами, игрок уходит от него на полном ходу: разворот по ходу, обычный бег
+  ({ w, p, run } = setup(-5, -7));
+  run(120, { guardHeld: true });
+  assert.ok(Math.abs(Math.abs(p.yaw) - Math.PI) < 0.3, 'в стойке игрок стоит лицом к мячу');
+  run(100, { guardHeld: true, mx: 1 });
+  assert.equal(p.guard, false, 'стойка снята: игрок бежит');
+  assert.ok(Math.abs(p.yaw) < 0.2, 'корпус развёрнут по ходу движения, yaw ' + p.yaw.toFixed(2));
+  assert.ok(Math.abs(Math.hypot(p.vx, p.vz) - w.P.player.runSpeed) < 0.1 && p.vx > 0, 'обычный бег вперёд ' + Math.hypot(p.vx, p.vz).toFixed(2));
+  run(60, { guardHeld: true });
+  assert.equal(p.guard, true, 'остановился — снова стойка лицом к мячу');
 });
 
 test('рывок в стойке: быстрый сдвиг в сторону, пауза перед следующим; без направления — обычный прыжок', () => {

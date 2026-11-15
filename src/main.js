@@ -227,7 +227,9 @@ document.addEventListener('visibilitychange', () => {
     if (game.mode === 'online' && game.net && game.net.session.me >= 0) game.net.session.hold();
   } else if (game.mode === 'online') resyncOnline();
 });
-game.manualFrame = (dt) => runFrame(last + dt * 1000);
+// Кадр вручную (лаборатория, пробы). Микросекунда сверху — чтобы кадр 1/60 с всегда давал ровно два шага симуляции:
+// без неё накопитель времени попадает точно на границу шага и из-за округления число шагов скачет, прогоны не повторяются.
+game.manualFrame = (dt) => runFrame(last + dt * 1000 + (dt > 0 ? 1e-3 : 0));
 input.onDeviceLost = () => pause('Геймпад отключён. Enter — продолжить на клавиатуре.');
 window.addEventListener('pointerdown', () => sfx.unlock());
 window.addEventListener('keydown', () => sfx.unlock());
@@ -281,6 +283,7 @@ function handleEvents(events, me = 0, accept = null) {
       case 'goal': {
         const scored = e.by === undefined ? e.scored : e.by === me;
         sfx.play('goal'); hud.showToast(scored ? 'ГОЛ!' : 'Пропущен', { big: true, ms: 1100 });
+        if (e.by !== undefined) (e.by === 1 ? rig2 : rig).celebrate(); else if (e.scored) rig.celebrate(); // празднует забивший
         if (game.settings.vibration) input.rumble(0.8, 200);
         break;
       }
@@ -422,8 +425,8 @@ function runFrame(now) {
   const mine = world.players[sess && sess.me === 1 ? 1 : 0];
   scene.updateBall(view.bx, view.by, view.bz, cur.bqx, cur.bqy, cur.bqz, cur.bqw);
   scene.updateNets(view.bx, view.by, view.bz, dtReal);
-  rig.update(view, { ball, kick: P0.kick, gesture: P0.gesture, guard: P0.guard || !!P0.lunge }, dtVis);
-  if (online && P1) rig2.update(view.p2, { ball, kick: P1.kick, gesture: P1.gesture, guard: P1.guard || !!P1.lunge }, dtVis);
+  rig.update(view, { ball, kick: P0.kick, gesture: P0.gesture, guard: P0.guard || !!P0.lunge, withBall: !!P0.possession, juggle: !!P0.juggle }, dtVis);
+  if (online && P1) rig2.update(view.p2, { ball, kick: P1.kick, gesture: P1.gesture, guard: P1.guard || !!P1.lunge, withBall: !!P1.possession, juggle: !!P1.juggle }, dtVis);
   scene.updateAim(mine.kick, world.P);
   scene.updateCamera(view.px, view.pz, view.yaw, dtReal);
   game.lab?.onFrame(dtReal);

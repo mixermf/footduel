@@ -10,6 +10,8 @@ const TUNABLES = [
   ['dribble.pushRun', 0.3, 2, 0.05], ['dribble.pushSprint', 0.5, 3, 0.05], ['dribble.pushControl', 0.2, 1.5, 0.05],
   ['ball.rollDecel', 0.8, 4, 0.1], ['kick.chargeTime', 0.2, 0.8, 0.01], ['kick.minSpeed', 6, 16, 0.5], ['kick.maxSpeed', 14, 32, 0.5],
   ['kick.maxSpin', 0, 90, 1], ['receive.window', 0.08, 0.3, 0.01],
+  ['kick.approachAngle', 0, 0.8, 0.02], ['kick.approachBack', 0.2, 0.5, 0.01], ['kick.approachSide', 0.1, 0.35, 0.01],
+  ['kick.followSpeed', 0, 2.5, 0.1], ['kick.followTime', 0.1, 0.8, 0.02], ['kick.followLand', 0.15, 0.6, 0.01],
   ['kick.strikeSpeed', 2, 7, 0.1], ['kick.strikeHorizon', 0.3, 1.2, 0.05], ['kick.volleyBonus', 0, 0.8, 0.05], ['kick.standReach', 0.7, 1.4, 0.05], ['kick.jumpReach', 0.3, 1.3, 0.05],
 ];
 const get = (o, path) => path.split('.').reduce((a, k) => a[k], o);
@@ -55,6 +57,8 @@ export class Lab {
     h('Отображение');
     btn('Кости', () => { g.rig.skeletonHelper.visible = !g.rig.skeletonHelper.visible; }, 'bones');
     btn('Точки стоп', () => { this.showFeet = !this.showFeet; }, 'feet');
+    btn('Клипы набора', () => { g.rig.packClips = g.rig2.packClips = !g.rig.packClips; }, 'pack'); // сравнение: клипы Mocap Pack / прежние
+    btn('Празднование', () => g.rig.celebrate());
     h('Запись');
     btn('Повтор с последнего сброса', () => g.startReplay());
     btn('Скачать журнал', () => g.exportLog());
@@ -71,6 +75,19 @@ export class Lab {
       l.append(name, inp, val); r.append(l);
       this.sliders.push({ path, inp, val });
     }
+    // подстройка клипа удара к мячу: коридор поправки и её вес по времени (playerRig.adapt)
+    h('Подстройка удара');
+    btn('Нога из клипа', () => { g.rig.adapt.kickLeg = g.rig2.adapt.kickLeg = !g.rig.adapt.kickLeg; }, 'kickleg');
+    btn('Профиль по референсу', () => { g.rig.adapt.kickRef = g.rig2.adapt.kickRef = !g.rig.adapt.kickRef; }, 'kickref');
+    for (const [key, min, max, step] of [['kickReach', 0, 0.8, 0.05], ['simLead', 0.04, 0.3, 0.01], ['simHold', 0.05, 0.4, 0.01], ['simAfter', 0, 1, 0.05],
+      ['antLead', 0.2, 0.8, 0.05], ['antFull', 0.05, 0.4, 0.05], ['kneeFront', 0, 0.6, 0.05], ['kneeRate', 5, 60, 1]]) {
+      const l = document.createElement('label');
+      const name = document.createElement('span'); name.textContent = 'adapt.' + key;
+      const inp = document.createElement('input'); inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step; inp.value = g.rig.adapt[key];
+      const val = document.createElement('span'); val.textContent = g.rig.adapt[key];
+      inp.addEventListener('input', () => { g.rig.adapt[key] = g.rig2.adapt[key] = Number(inp.value); val.textContent = inp.value; });
+      l.append(name, inp, val); r.append(l);
+    }
     btn('Сбросить профиль', () => { const fresh = createProfile(); for (const k of Object.keys(fresh)) g.world.P[k] = fresh[k]; });
     this._sync();
   }
@@ -80,7 +97,7 @@ export class Lab {
     for (const b of this.root.querySelectorAll('button[data-g]')) {
       const k = b.dataset.g;
       b.classList.toggle('on', k === 'ts:' + g.timeScale || (k === 'pause' && g.simPaused) || k === 'view:' + g.scene.view
-        || (k === 'bones' && g.rig.skeletonHelper?.visible) || (k === 'feet' && this.showFeet));
+        || (k === 'bones' && g.rig.skeletonHelper?.visible) || (k === 'feet' && this.showFeet) || (k === 'pack' && g.rig.packClips) || (k === 'kickleg' && g.rig.adapt.kickLeg) || (k === 'kickref' && g.rig.adapt.kickRef));
     }
     for (const s of this.sliders) { const v = get(g.world.P, s.path); s.inp.value = v; s.val.textContent = v; }
   }
@@ -139,6 +156,8 @@ export class Lab {
       `удары ${s.kicks} / мимо ${s.kickMisses}  приёмы ${s.receives}  потери ${s.lostControl}`,
       `последний зазор промаха ${f2(d.lastTouchGap)} м`,
       `удар: ${k ? k.phase + ' заряд ' + f2(k.charge) + ' цель ' + f2(k.aimLat) + '/' + f2(k.aimHigh) + ' нога ' + (k.footSide > 0 ? 'П' : 'Л') : '—'}`,
+      `план удара: поза ${f2(g.rig.diag.plan.w)}  высота контакта ${f2(g.rig.diag.plan.h)} м  до контакта ${f2(g.rig.diag.plan.tc)} с`,
+      `нога из клипа: вес ${f2(g.rig.diag.kick.legK)}  к мячу ${f2(g.rig.diag.kick.sim)}  поправка ${(g.rig.diag.kick.corr * 100).toFixed(0)} см  срезано ${(g.rig.diag.kick.cut * 100).toFixed(0)} см`,
       `стопы: Л ${p.feet[0].planted ? 'опора' : 'мах'} h ${f2(p.feet[0].h)}  П ${p.feet[1].planted ? 'опора' : 'мах'} h ${f2(p.feet[1].h)}`,
       `опора (кости после IK): дрейф ${(d.slipMax * 100).toFixed(1)} см/кадр, высота ${(d.soleErrMax * 100).toFixed(1)} см, недотяг ${(d.reachMax * 100).toFixed(1)} см`,
       g.rig.ready ? `модель: рост ${g.rig.info.height} м (×${g.rig.info.scale.toFixed(4)}), бедро ${f2(g.rig.info.thigh)}, голень ${f2(g.rig.info.shin)}, подошва y ${g.rig.info.soleY.toFixed(3)}` : 'модель загружается',

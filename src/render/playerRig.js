@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import modelUrl from '../../assets/player/player.glb?url';
-import { CLIPS, PoseBlend, strikePhase } from './mocap.js';
+import { CLIPS, PoseBlend, strikePhase, UPPER_BODY, clipFoot } from './mocap.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion();
@@ -26,19 +26,83 @@ function setWorldQuat(bone, q) {
   bone.quaternion.copy(_q3.invert().multiply(q));
 }
 
+// Опорные позы удара по высоте контакта: h — центр мяча над опорой игрока в момент удара, м.
+// Высоту заранее сообщает план удара из симуляции, поза набирается до того, как нога пошла к мячу.
+//   back — наклон корпуса назад, рад (< 0 — вперёд, над мячом); side — наклон от бьющей ноги, рад;
+//   open — раскрытие корпуса к бьющей ноге перед ударом, рад; drop — приседание на опорной ноге, м;
+//   kneeUp, kneeOut — куда смотрит колено бьющей ноги (вверх, наружу); along — стопа продолжает линию голени (0..1);
+//   arms — разведение рук для баланса, рад; high — доля «удара с лёта» для размаха рук и корпуса.
+// Значения — оценка по прежней процедурной позе; заменяются числами из раскадровки видеореференсов.
+export const KICK_POSES = [
+  { h: 0.11, back: -0.04, side: 0.05, open: 0.22, drop: 0.035, kneeUp: 0, kneeOut: 0, along: 0, arms: 0.1, high: 0 },
+  { h: 0.35, back: 0.03, side: 0.1, open: 0.26, drop: 0.03, kneeUp: 0.25, kneeOut: 0.15, along: 0.35, arms: 0.18, high: 0.15 },
+  // мяч на весу: удар сбоку — бедро отводится в сторону и нога идёт к мячу по горизонтальной дуге, корпус клонится
+  // от бьющей ноги, руки широко разведены. Колено смотрит наружу, а не вверх: иначе бедро задирается выше таза.
+  { h: 0.6, back: 0.07, side: 0.3, open: 0.32, drop: 0.025, kneeUp: 0.3, kneeOut: 0.8, along: 0.9, arms: 0.28, high: 0.65 },
+  { h: 0.9, back: 0.1, side: 0.42, open: 0.38, drop: 0.02, kneeUp: 0.35, kneeOut: 1.2, along: 1, arms: 0.38, high: 1 },
+];
+const KICK_KEYS = ['back', 'side', 'open', 'drop', 'kneeUp', 'kneeOut', 'along', 'arms', 'high'];
+
+// Поза для высоты h: линейное смешивание двух соседних опорных поз, умноженное на вес w
+function kickPose(h, w, out) {
+  const T = KICK_POSES, n = T.length;
+  let i = 0;
+  while (i < n - 2 && h > T[i + 1].h) i++;
+  const a = T[i], b = T[i + 1], k = clamp((h - a.h) / (b.h - a.h), 0, 1);
+  for (const key of KICK_KEYS) out[key] = (a[key] + (b[key] - a[key]) * k) * w;
+  return out;
+}
+
+// Профиль удара с места по раскадровке refs/kick-reference.mp4 (замедленная съёмка сбоку, замедление ~3,5× — оценка).
+// Точки — [время относительно контакта, с; добавка, рад]; между точками — линейно. Добавки ложатся поверх клипа удара:
+//   lean — корпус: в замахе наклонён вперёд, к контакту выпрямляется и уходит назад, в проводке отклонён назад;
+//   side — наклон от бьющей ноги к опорной: наибольший в момент контакта;
+//   arm  — рука, противоположная бьющей ноге: в замахе поднята в сторону для баланса.
+// Углы сняты на глаз с одного ракурса: тайминг и форма надёжны, абсолютные значения — оценка.
+export const KICK_REF = {
+  lean: [[-0.22, 0.4], [-0.1, 0.48], [0, -0.14], [0.12, -0.55], [0.26, -0.15]],
+  side: [[-0.22, 0.04], [-0.08, 0.14], [0, 0.3], [0.12, 0.24], [0.26, 0.04]],
+  arm: [[-0.22, 0.25], [-0.1, 0.4], [0, 0.2], [0.12, 0]],
+  // таз отходит от мяча назад, м: в референсе тазобедренный сустав в момент контакта позади мяча, нога почти прямая;
+  // в игре игрок стоит ближе к мячу, и без этого бьющая нога в контакте сложена пополам
+  hipBack: [[-0.2, 0], [-0.06, 0.1], [0, 0.18], [0.1, 0.1], [0.24, 0]],
+  pelvis: 0.85, // насколько выпрямляется приседание из клипа: в клипе актёр бьёт с длинного выпада, в игре стопы стоят ближе
+};
+function profile(pts, x) {
+  if (x <= pts[0][0]) return pts[0][1];
+  for (let i = 1; i < pts.length; i++) if (x <= pts[i][0]) { const a = pts[i - 1], b = pts[i]; return a[1] + (b[1] - a[1]) * (x - a[0]) / (b[0] - a[0]); }
+  return pts[pts.length - 1][1];
+}
+
 export class PlayerRig {
   constructor() {
     this.ready = false;
     this.root = new THREE.Group();
     this.bones = {};
     this.info = {};
-    this.diag = { reachErr: [0, 0], pitch: [0, 0], pelvisY: 0 };
+    this.diag = { reachErr: [0, 0], pitch: [0, 0], pelvisY: 0, cap: [9, 9] }; // cap — предел высоты таза по каждой опорной ноге
     this.sp = {}; this.t = 0; this._wasAir = false;
     this.pose = new PoseBlend(); this._gp = 0; this._kc = 0; this._kOn = false; this._kSide = 1; this._kDyn = false; this._kCharge = 0; this._py = 0;
     this._pv = { x: 0, z: 0 }; this._acc = { f: 0, r: 0 };
     this._pelvisY = null; this._look = 0;
     this.skeletonHelper = null;
+    // клипы набора Mocap Pack 05 Soccer: удары, стойка защитника, чеканка, празднование. Выключатель — для сравнения в лаборатории
+    this.packClips = true;
+    this._kClip = CLIPS.kick; this._kPack = false; this._cel = null;
+    // Подстройка клипа к ситуации. Бьющая нога идёт по траектории из клипа; к точке, где стопу держит симуляция
+    // (контакт с мячом), её подтягивает поправка не длиннее kickReach. simLead/simHold — за сколько секунд до контакта
+    // поправка набирает полный вес и как быстро отпускает ногу в проводку; simAfter — остаток веса в проводке.
+    // kneeFront — насколько колено обязано смотреть вперёд-вверх от линии бедро — стопа (0 — на линии, 1 — строго вперёд);
+    // kneeRate — предел скорости поворота колена вокруг этой линии, 1/с.
+    this.adapt = { kickLeg: true, kickRef: true, kickReach: 0.45, simLead: 0.14, simHold: 0.12, simAfter: 0.15, kneeFront: 0.25, kneeRate: 30,
+      antLead: 0.55, antFull: 0.2, pelvisReach: 0.1, legMin: 0.8, legMax: 0.97 }; // поза удара начинает набираться за antLead с до контакта и набрана полностью за antFull с
+    this._kLeg = false; this._kH = 0.11; this._kSideA = 0; this._kp = {};
+    this.diag.plan = { w: 0, h: 0.11, tc: 0 }; // вес позы удара, высота контакта по плану, время до контакта
+    this.diag.kick = { corr: 0, cut: 0, legK: 0, sim: 0 }; // длина поправки, срезанная часть, вес клипа в ноге, вес симуляции
   }
+
+  // празднование гола: руки и корпус из клипа, пока игрок не начал удар
+  celebrate() { this._cel = 0; }
 
   async load(scene, targetHeight) {
     const gltf = await new GLTFLoader().loadAsync(modelUrl);
@@ -91,7 +155,7 @@ export class PlayerRig {
     this.legs = [-1, 1].map((side) => {
       const n = side < 0 ? 'Left' : 'Right';
       return {
-        side,
+        side, name: n, restDir: R[n + 'Leg'].p.clone().sub(R[n + 'UpLeg'].p).normalize(),
         thigh: limb(n + 'UpLeg', n + 'Leg', legAxis), shin: limb(n + 'Leg', n + 'Foot', legAxis),
         up: B[n + 'UpLeg'], foot: B[n + 'Foot'], footRest: R[n + 'Foot'].q,
         l1: R[n + 'Leg'].p.distanceTo(R[n + 'UpLeg'].p), l2: R[n + 'Foot'].p.distanceTo(R[n + 'Leg'].p),
@@ -186,17 +250,46 @@ export class PlayerRig {
     const loco = (clip, weight) => P.add(clip, (this._gp + strikePhase(clip)) * clip.duration, Math.max(0, weight));
     P.add(CLIPS.idle, this.t, Math.max(0, w.idle));
     loco(CLIPS.jogForward, w.fwd); loco(CLIPS.jogBackward, w.back); loco(CLIPS.jogLeft, w.left); loco(CLIPS.jogRight, w.right);
+    // ходьба: клипа ходьбы нет, а беговой верх (локти под 90°, наклон) на шаге читается как трусца на месте —
+    // руки и корпус берутся в основном из спокойной стойки, противоход рук добавляется процедурно
+    if (this._wk > 0.01) P.add(CLIPS.idle, this.t, 2.6 * this._wk, false, UPPER_BODY);
+    if (this.packClips) {
+      // стойка защитника и чеканка: верх тела из клипа; ноги и высоту таза по-прежнему ведёт симуляция
+      if (this._gd > 0.01) P.add(CLIPS.packGuard, this.t, 2.2 * this._gd, false, UPPER_BODY);
+      const wj = this._spring('wJug', aux.juggle ? 1 : 0, 4, 1, dt);
+      if (wj > 0.01) P.add(CLIPS.packJuggle, this.t, 2.2 * wj, false, UPPER_BODY);
+      if (this._cel !== null) {
+        this._cel += dt;
+        const c = this._cel, wc = clamp(c / 0.25, 0, 1) * clamp((2.6 - c) / 0.5, 0, 1);
+        if (c >= 2.6 || aux.kick) this._cel = null;
+        else P.add(CLIPS.packCelebrate, c, 6 * wc * wc * (3 - 2 * wc), false, UPPER_BODY);
+      }
+    }
 
     // удар: клип привязан к моменту контакта; для другой ноги — зеркально
     const kick = aux.kick, ph = kick ? kick.phase : null;
     if (kick) this._kCharge = kick.charge;
-    if (ph === 'windup') { this._kc = -(kick.windDur - kick.t + (kick.dyn ? 0.09 : 0.075)); this._kSide = kick.footSide; this._kDyn = !!kick.dyn; this._kOn = true; }
+    if (ph === 'windup') {
+      if (!this._kOn) {
+        // клип выбирается один раз на удар: с хода — прежний удар на бегу; с места — щёчкой или силовой по заряду
+        const jog = kick.dyn && speed > 1.2;
+        // мяч на весу: клипы набора сняты для лежащего мяча (пас щёчкой, удар подъёмом) и для удара с лёта не подходят
+        const volley = !!(kick.dyn && kick.plan && kick.plan.high);
+        this._kPack = this.packClips && !jog && !kick.bike && !volley;
+        // нога из клипа — только для удара с места по лежащему мячу: клип снят именно для него. По летящему мячу
+        // стопа идёт на другую высоту, и клип пришлось бы тянуть на 0,8–1 м — колено при этом выгибалось назад
+        this._kLeg = this._kPack && !kick.dyn;
+        this._kClip = jog || volley ? CLIPS.strikeJog : !this._kPack ? CLIPS.kick : kick.charge >= 0.55 ? CLIPS.packKickPower : CLIPS.packKickSide;
+      }
+      this._kc = -(kick.windDur - kick.t + (kick.dyn ? 0.09 : 0.075)); this._kSide = kick.footSide; this._kDyn = !!kick.dyn; this._kOn = true;
+    }
     else if (ph === 'swing') { this._kc = Math.min(0, this._kc + dt); this._kOn = true; }
     else if (ph === 'curl') { this._kc = kick.t; this._kOn = true; }
-    else if (this._kOn) { this._kc += dt; if (this._kc > 0.24 || this._kc < 0) this._kOn = false; }
-    const kw = this._spring('wKick', this._kOn ? 1 : 0, 9, 1, dt);
+    // после удара клип доигрывает проводку, а не обрывается: поза входит в удар быстро и отпускается плавно
+    else if (this._kOn) { this._kc += dt; if (this._kc > (this._kLeg ? 0.36 : 0.3) || this._kc < 0) this._kOn = false; }
+    const kw = this._spring('wKick', this._kOn ? 1 : 0, this._kOn ? 9 : 3.5, 1, dt);
     if (kw > 0.01) {
-      const clip = this._kDyn && speed > 1.2 ? CLIPS.strikeJog : CLIPS.kick;
+      const clip = this._kClip;
       const mirror = (clip.kickFoot === 'R') !== (this._kSide > 0);
       // остальные позы приглушаются, чтобы удар читался целиком
       P.acc.forEach((v, i) => { P.acc[i] = v * (1 - kw * 0.85); }); P.hips.multiplyScalar(1 - kw * 0.85); P.w *= 1 - kw * 0.85;
@@ -237,23 +330,52 @@ export class PlayerRig {
     const kPhase = kick ? kick.phase : null;
     const kicking = kPhase === 'windup' || kPhase === 'swing' || kPhase === 'curl';
 
+    // доля ходьбы: шаг без мяча на малой скорости (те же границы, что у цикла шага в симуляции);
+    // с мячом, в стойке, в ударе и в воздухе остаётся беговая постановка корпуса
+    const wkS = clamp((speed - 1.4) / 0.6, 0, 1);
+    const wkT = aux.withBall || aux.guard || air || kick ? 0 : (1 - wkS * wkS * (3 - 2 * wkS)) * clamp((speed - 0.3) / 0.5, 0, 1);
+    const wk = this._wk = clamp(this._spring('walk', wkT, 3, 1, dt), 0, 1);
+
+    const gd = this._gd = this._spring('guard', aux.guard ? 1 : 0, 5, 0.85, dt);
     const pose = this._mocapPose(s, aux, dt, f, r, speed);
-    const gd = this._spring('guard', aux.guard ? 1 : 0, 5, 0.85, dt);
+    // поверх клипов набора процедурные добавки рук и корпуса ослаблены: движение уже есть в самом клипе
+    const kProc = this._kPack ? 0.35 : 1, gProc = this.packClips ? 0.35 : 1;
     // удар через себя: корпус заваливается назад, пока идёт удар и игрок в воздухе после него
     const bk = this._spring('bike', kick && kick.bike && kicking ? 1 : 0, 5, 0.95, dt); // защитная стойка: ниже, шире, руки в стороны
 
-    // высота бьющей стопы над опорой: чем выше мяч, тем сильнее корпус уходит назад и вбок (удар с лёта)
+    // ----- план удара: симуляция заранее знает высоту и время контакта (kick.plan — прогноз полёта мяча до 0,8 с).
+    // Поза выбирается по этой высоте из опорных поз и набирается за adapt.antLead секунд до контакта,
+    // а не подгоняется по высоте стопы, когда нога уже пошла к мячу.
     const kickSide = kick ? kick.footSide : 0;
-    const kfh = kicking ? s.feet[kickSide > 0 ? 1 : 0].h - s.py : 0;
-    const kh = this._spring('kh', kicking ? clamp((kfh - 0.3) / 0.5, 0, 1) : 0, 7, 0.8, dt);
+    let antT = 0, tc = 0;
+    if (kick && !kick.bike) {
+      const ad = this.adapt, waiting = kPhase === 'charge' || kPhase === 'ready';
+      if (kick.plan && (waiting || kick.dyn)) this._kH = kick.plan.hRel;
+      else if (kicking && !kick.dyn && aux.ball) this._kH = aux.ball.y - s.py; // удар с места: мяч уже здесь
+      if (waiting && kick.plan) {
+        tc = kick.plan.t;
+        const a = clamp((ad.antLead - tc) / Math.max(0.01, ad.antLead - ad.antFull), 0, 1);
+        antT = a * a * (3 - 2 * a);
+      } else if (kicking) antT = 1;
+      this._kSideA = kickSide;
+    }
+    const wA = clamp(this._spring('kAnt', antT, 6, 1, dt), 0, 1);
+    const hPlan = wA < 0.02 ? (this.sp.kHs = { x: this._kH, v: 0 }).x : this._spring('kHs', this._kH, 6, 1, dt);
+    const KP = kickPose(hPlan, wA * (this._kOn && this._kLeg ? 0.35 : 1), this._kp);
+    const sideA = this._spring('kSideA', this._kSideA, 6, 1, dt); // план может сменить бьющую ногу: наклон переходит плавно
+    this.diag.plan.w = wA; this.diag.plan.h = hPlan; this.diag.plan.tc = tc;
+    // профиль по видеореференсу — для удара с места по лежащему мячу; силовой — в полную меру, щёчкой — слабее
+    const refW = this.adapt.kickRef && this._kLeg ? clamp(this.sp.kLeg ? this.sp.kLeg.x : 0, 0, 1) * (this._kClip === CLIPS.packKickPower ? 1 : 0.4) : 0;
+    const refLean = refW > 0.01 ? profile(KICK_REF.lean, this._kc) * refW : 0, refSide = refW > 0.01 ? profile(KICK_REF.side, this._kc) * refW : 0;
+    const refArm = refW > 0.01 ? profile(KICK_REF.arm, this._kc) * refW : 0;
     // добавочный наклон: поза клипа уже содержит наклон бега, здесь только ускорение, спринт и события
     let leanFT = clamp(0.015 * this._acc.f + 0.03 * run + 0.045 * Math.max(0, speed - 2.6), -0.26, 0.36);
     if (g && g.type === 'chest') leanFT -= 0.18 * gw;
     if (g && g.type === 'hit') leanFT -= 0.32 * gw; // непринятый мяч в корпус: игрока отбрасывает назад
     leanFT += 0.15 * gd;
     if (air && !kicking) leanFT -= 0.12; // в прыжке корпус выпрямляется, а не горбится
-    const leanF = this._spring('leanF', leanFT, 3.4, 0.8, dt) - 0.2 * kh * (1 - bk) - 0.8 * bk;
-    const leanS = this._spring('leanS', clamp(0.017 * this._acc.r, -0.3, 0.3), 3.4, 0.75, dt) - kickSide * 0.24 * kh; // >0 — наклон вправо
+    const leanF = this._spring('leanF', leanFT, 3.4, 0.8, dt) - KP.back * (1 - bk) - 0.8 * bk + refLean;
+    const leanS = this._spring('leanS', clamp(0.017 * this._acc.r, -0.3, 0.3), 3.4, 0.75, dt) + sideA * KP.side + this._kSide * refSide; // наклон от бьющей ноги к опорной (знак проверен пробой позы: раньше корпус клонился к мячу)
     const yawQ = this._yawQuat(th, new THREE.Quaternion());
 
     // ----- аркадное усиление, чтобы движение читалось с игровой камеры
@@ -262,9 +384,10 @@ export class PlayerRig {
     // корпус скручивается навстречу тазу: левое плечо идёт вперёд вместе с правой ногой
     let twistT = clamp(dStride * 0.36, -0.3, 0.3) * (0.35 + 0.65 * run);
     // удар: корпус раскрывается к бьющей ноге на замахе и закручивается следом после контакта
-    const kOn = this._kOn, kSide = this._kSide, kAmp = kOn ? 0.55 + 0.45 * this._kCharge + 0.25 * kh : 0;
+    const kOn = this._kOn, kSide = this._kSide, kAmp = kOn ? (0.55 + 0.45 * this._kCharge + 0.25 * KP.high) * kProc : 0;
     const kPre = kOn && this._kc < 0, kPost = kOn && this._kc >= 0;
     if (kPre) twistT += kSide * 0.4 * kAmp; else if (kPost) twistT -= kSide * 0.5 * kAmp;
+    else twistT += sideA * KP.open; // до замаха: корпус уже раскрывается к бьющей ноге
     const twist = this._spring('twist', twistT, 6.5, 0.65, dt);
     const twQ = (k) => new THREE.Quaternion().setFromAxisAngle(UP, -twist * k); // поворот вправо в осях сцены — отрицательный вокруг Y
     const vyEst = dt > 0 ? (s.py - this._py) / dt : 0; this._py = s.py;
@@ -272,7 +395,7 @@ export class PlayerRig {
     // руки: противоход ногам; в ударе — баланс и размах; в прыжке — мах вверх и разведение
     const armQ = [-1, 1].map((side, i) => {
       // противоход ногам, одинаково вперёд и назад: руки не выносятся обе перед грудью
-      let swT = clamp(-side * dStride * 0.9, -0.45, 0.45) * (0.25 + 0.75 * run);
+      let swT = clamp(-side * dStride * 0.9, -0.45, 0.45) * Math.max(0.25 + 0.75 * run, 0.85 * wk);
       let abdT = 0.07 + 0.14 * run, flexT = 0.6 * run + Math.max(0, swT) * 0.35;
       if (kOn) {
         // удар: рука со стороны бьющей ноги уходит назад, противоположная — вперёд и немного в сторону; без «самолёта»
@@ -280,13 +403,15 @@ export class PlayerRig {
         if (kPre) { swT = same ? -0.55 * kAmp : 0.45 * kAmp; abdT = same ? 0.25 * kAmp : 0.5 * kAmp; flexT = same ? 0.25 : 0.4; }
         else { swT = same ? 0.4 * kAmp : -0.4 * kAmp; abdT = same ? 0.25 * kAmp : 0.4 * kAmp; flexT = same ? 0.45 : 0.25; }
       }
+      if ((kSide > 0) !== (side > 0)) abdT += refArm; // рука напротив бьющей ноги поднята в сторону, как в референсе
+      abdT += KP.arms * (kOn ? 0.4 + 0.6 * Math.min(1, KP.high * 1.5) : 1); // баланс: чем выше мяч, тем шире руки; начинается до замаха
       if (air && !kOn) {
         // прыжок: согнутые руки идут вперёд-вверх до уровня плеч на взлёте и расходятся для баланса на спуске
         if (vyEst > 0.4) { swT = 0.3; abdT = Math.max(abdT, 0.25); flexT = 0.7; }
         else { swT = 0.1; abdT = Math.max(abdT, 0.4); flexT = 0.45; }
       }
       if (bk > 0.01) { swT += (0.35 - swT) * bk; abdT = Math.max(abdT, 0.6 * bk); flexT += (0.4 - flexT) * bk; } // руки в стороны для баланса
-      if (gd > 0.01 && !kOn && !air) { swT += (0.28 - swT) * gd; abdT = Math.max(abdT, 0.55 * gd); flexT += (0.75 - flexT) * gd; }
+      if (gd > 0.01 && !kOn && !air) { const k = gd * gProc; swT += (0.28 - swT) * k; abdT = Math.max(abdT, 0.55 * k); flexT += (0.75 - flexT) * k; }
       const sw = this._spring('aSw' + i, swT, 5.5, 0.55, dt), abd = this._spring('aAbd' + i, abdT, 5, 0.65, dt), flex = this._spring('aFl' + i, flexT, 5.5, 0.6, dt);
       const upper = addQ.clone().multiply(_q.setFromAxisAngle(r, sw)).multiply(_q2.setFromAxisAngle(f, -side * abd));
       const fore = addQ.clone().multiply(_q.setFromAxisAngle(r, sw + flex)).multiply(_q2.setFromAxisAngle(f, -side * abd));
@@ -330,34 +455,62 @@ export class PlayerRig {
     if (this._wasAir && !air) this.sp.squash = { x: (this.sp.squash ? this.sp.squash.x : 0), v: 1.3 };
     this._wasAir = air;
     const squash = this._spring('squash', 0, 3.2, 0.55, dt);
-    const crouch = 0.012 + Math.min(0.05, accMag * 0.0035) + (kPhase === 'windup' || kPhase === 'swing' ? 0.02 + 0.02 * kc : 0)
+    const crouch = 0.012 + KP.drop +Math.min(0.05, accMag * 0.0035) + (kPhase === 'windup' || kPhase === 'swing' ? 0.02 + 0.02 * kc : 0)
       + (feetT[0].top || feetT[1].top ? 0.03 : 0) + Math.max(0, squash) + 0.1 * gd;
     const swayX = pose.hips.x * this.hipRestY;
-    const cx = s.px + r.x * -swayX + f.x * leanF * 0.15, cz = s.pz + r.z * -swayX + f.z * leanF * 0.15;
+    const hipBack = refW > 0.01 ? profile(KICK_REF.hipBack, this._kc) * refW : 0;
+    const cx = s.px + r.x * -swayX + f.x * (leanF * 0.15 - hipBack), cz = s.pz + r.z * -swayX + f.z * (leanF * 0.15 - hipBack);
     let allowed = 9;
     const A0 = new THREE.Vector3();
     if (!air) {
       for (let i = 0; i < 2; i++) {
         const L = this.legs[i], ft = feetT[i];
+        this.diag.cap[i] = 9;
         if (!ft.planted && ft.h > 0.03) continue;
         const jx = cx + r.x * L.side * this.hipHalf, jz = cz + r.z * L.side * this.hipHalf;
-        this._ankle(L, ft, fo[i] < 0 ? 0.9 : 0, A0); // стопа позади может подняться на носок
+        this._ankle(L, ft, fo[i] < 0 ? 0.9 : Math.min(0, L.pitch) * wk, A0); // стопа позади может подняться на носок; в шаге передняя стоит на пятке
         const dh2 = (A0.x - jx) ** 2 + (A0.z - jz) ** 2;
         const Lmax = (L.l1 + L.l2) * 0.992;
-        allowed = Math.min(allowed, A0.y + Math.sqrt(Math.max(0.04, Lmax * Lmax - dh2)) - this.hipJointDy);
+        const cap = A0.y + Math.sqrt(Math.max(0.04, Lmax * Lmax - dh2)) - this.hipJointDy;
+        this.diag.cap[i] = cap;
+        allowed = Math.min(allowed, cap);
       }
       allowed = Math.max(allowed, this.hipRestY - 0.16 - 0.08 * gd);
     }
-    const pelT = Math.min(pose.hips.y * this.hipRestY - crouch, allowed);
+    // ходьба: у бегового клипа таз ниже всего в середине опоры, у шага — наоборот. Высоту задаёт сама опорная нога:
+    // почти прямая, таз идёт над ней дугой — выше всего над стопой, ниже всего на двойной опоре
+    const walkY = Math.min(allowed, this.hipRestY) - 0.008;
+    const clipY = pose.hips.y < 1 ? pose.hips.y + (1 - pose.hips.y) * KICK_REF.pelvis * refW : pose.hips.y;
+    const pelT = Math.min((clipY * this.hipRestY - crouch) * (1 - wk) + walkY * wk, allowed);
     const pelvisY = s.py + this._spring('pelY', pelT, 8, 0.9, dt);
     this.diag.pelvisY = pelvisY;
 
+    // ----- добор тазом в ударе по летящему мячу: бьющая нога не должна ни тянуться (стопа не достаёт до мяча),
+    // ни складываться пополам (мяч слишком близко). Таз сдвигается к мячу или от него так, чтобы расстояние
+    // тазобедренный сустав — голеностоп осталось в пределах legMin..legMax длины ноги; сдвиг не больше pelvisReach.
+    let regX = 0, regZ = 0;
+    // только в проносе и контакте: в замахе нога сложена намеренно, отодвигать от неё таз незачем
+    if ((kPhase === 'swing' || kPhase === 'curl') && kick.dyn && !kick.bike) {
+      const ad = this.adapt, ki = kickSide > 0 ? 1 : 0, L = this.legs[ki], LL = L.l1 + L.l2;
+      const jx = cx + r.x * L.side * this.hipHalf, jz = cz + r.z * L.side * this.hipHalf, jy = pelvisY + this.hipJointDy;
+      this._ankle(L, feetT[ki], air ? 0.5 : 0.55, A0);
+      const dx = A0.x - jx, dz = A0.z - jz, dy = A0.y - jy, dh = Math.hypot(dx, dz) || 1e-6, d = Math.hypot(dh, dy);
+      const want = clamp(d, ad.legMin * LL, ad.legMax * LL);
+      const sh = clamp(dh - Math.sqrt(Math.max(0, want * want - dy * dy)), -ad.pelvisReach, ad.pelvisReach); // > 0 — к мячу
+      regX = (dx / dh) * sh; regZ = (dz / dh) * sh;
+      this.diag.kick.pelvis = sh;
+    } else this.diag.kick.pelvis = 0;
+    const pvx = this._spring('pvX', regX, 9, 1, dt), pvz = this._spring('pvZ', regZ, 9, 1, dt);
+
     world('Hips', new THREE.Quaternion().setFromAxisAngle(r, -leanF * 0.6).multiply(_q.setFromAxisAngle(f, -leanS * 0.6)).multiply(twQ(-0.4)));
-    B.Hips.position.copy(B.Hips.parent.worldToLocal(new THREE.Vector3(cx, pelvisY, cz)));
+    B.Hips.position.copy(B.Hips.parent.worldToLocal(new THREE.Vector3(cx + pvx, pelvisY, cz + pvz)));
 
     // ----- ноги: двухзвенный IK к точкам стоп из симуляции, перекат стопы
     const H = new THREE.Vector3(), A = new THREE.Vector3(), dir = new THREE.Vector3(), bend = new THREE.Vector3(), knee = new THREE.Vector3(), axis = new THREE.Vector3(), v = new THREE.Vector3();
+    const cA = new THREE.Vector3(), corr = new THREE.Vector3(), clipFootQ = new THREE.Quaternion(), hinge = new THREE.Vector3();
     const sf = clamp(speed / 3.5, 0.3, 1.15);
+    const heel = Math.max(run, 0.85 * wk); // в шаге стопа ставится с пятки так же отчётливо, как в беге
+    const bw = clamp((-(s.vx * f.x + s.vz * f.z) - 0.5) / 0.8, 0, 1); // доля движения спиной вперёд: перекат стопы идёт наоборот
     for (let i = 0; i < 2; i++) {
       const L = this.legs[i], ft = feetT[i];
       const ff = new THREE.Vector3(Math.cos(ft.yaw), 0, Math.sin(ft.yaw));
@@ -371,16 +524,20 @@ export class PlayerRig {
         pitch = 0;
         if (behind) {
           // толчок: пятка поднимается вокруг носка по мере ухода стопы назад — и не меньше, чем нужно ноге, чтобы дотянуться
-          const natural = clamp((-fo[i] - 0.06) / 0.3, 0, 1) * 0.85 * Math.max(run, 0.35);
+          // спиной вперёд эта стопа — ведущая: она только что встала, с носка, и толкаться ей ещё рано
+          const natural = clamp((-fo[i] - 0.06) / 0.3, 0, 1) * 0.85 * Math.max(run, 0.35) * (1 - bw) + 0.14 * bw * clamp(-fo[i] / 0.25, 0, 1);
           for (; pitch < 1.0; pitch += 0.05) { if (this._ankle(L, ft, pitch, A).distanceTo(H) <= dmax) break; }
           pitch = Math.max(pitch, natural);
-        } else if (fo[i] > 0.08 && run > 0.25) pitch = -0.34 * clamp((fo[i] - 0.08) / 0.18, 0, 1) * run; // постановка с пятки
+        } else if (fo[i] > 0.08 && heel > 0.25) pitch = -0.34 * clamp((fo[i] - 0.08) / 0.18, 0, 1) * heel * (1 - bw); // постановка с пятки
+        // спиной вперёд стопа перед корпусом — толчковая: пятка поднимается, толчок идёт с носка
+        if (!behind && bw > 0.01) pitch += 0.55 * bw * clamp((fo[i] - 0.05) / 0.3, 0, 1);
         // без скачка в момент постановки и отрыва
         L.pitch += (pitch - L.pitch) * (dt > 0 ? Math.min(1, 30 * dt) : 1);
         if (!behind || L.pitch > pitch) pitch = L.pitch; else L.pitch = pitch;
       } else {
         const u = ft.u;
-        let target = u < 0.62 ? 0.3 + 0.95 * sf * Math.sin(Math.PI * u / 0.62) * (1 - 0.3 * u) : -0.36 * sf * ((u - 0.62) / 0.38); // захлёст, затем носок на себя
+        let target = u < 0.62 ? 0.3 + 0.95 * sf * Math.sin(Math.PI * u / 0.62) * (1 - 0.3 * u) : -0.36 * Math.max(sf, heel) * ((u - 0.62) / 0.38); // захлёст, затем носок на себя
+        target += (0.22 - target) * bw; // спиной вперёд: без захлёста, стопа идёт низко и почти ровно
         if (ft.top) target *= 1 - u; // подошва ложится на мяч плоско
         if (isKickFoot) target = 0.55;
         if (air) target = 0.5;
@@ -390,6 +547,31 @@ export class PlayerRig {
       }
       this.diag.pitch[i] = pitch;
       this._ankle(L, ft, pitch, A);
+      // ----- бьющая нога из клипа: траектория голеностопа, направление колена и разворот стопы — как в motion capture;
+      // симуляция только подтягивает стопу к точке контакта, и не дальше, чем на adapt.kickReach
+      let legK = 0;
+      const kClip = this._kClip;
+      if (this.adapt.kickLeg && this._kLeg && kClip.feet && (this._kSide > 0) === (i === 1)) {
+        // в удар нога входит быстро, а из проводки на покрытие опускается плавно — иначе стопа падает рывком
+        legK = clamp(this._spring('kLeg', this._kOn ? 1 : 0, this._kOn ? 9 : 2.5, 1, dt), 0, 1);
+        if (legK > 0.01) {
+          const ad = this.adapt, kcNow = this._kc, sm = (x) => { const y = clamp(x, 0, 1); return y * y * (3 - 2 * y); };
+          // вес симуляции: к контакту — полный (стопа точно у мяча), в проводке нога снова идёт по клипу;
+          // на покрытие её возвращает затухание самого клипа удара (legK), а не эта поправка
+          const sim = kcNow < 0 ? sm((kcNow + ad.simLead) / ad.simLead) : 1 - (1 - ad.simAfter) * sm(kcNow / ad.simHold);
+          clipFoot(kClip, kClip.contact + kcNow, i, (kClip.kickFoot === 'R') !== (this._kSide > 0), cA);
+          cA.applyQuaternion(yawQ).multiplyScalar(L.l1 + L.l2).add(H);
+          cA.y = Math.max(cA.y, s.py + L.toeH + 0.04); // стопа из клипа не уходит под покрытие
+          corr.subVectors(A, cA).multiplyScalar(sim);
+          const cl = corr.length(), cut = Math.max(0, cl - ad.kickReach);
+          if (cut > 0) corr.multiplyScalar(ad.kickReach / cl);
+          const D = this.diag.kick; D.corr = cl; D.cut = cut; D.legK = legK; D.sim = sim;
+          A.lerp(cA.add(corr), legK);
+          clipFootQ.copy(yawQ).multiply(pose.get(L.name + 'Foot')).multiply(L.footRest);
+        }
+      }
+      if (legK <= 0.01 && (this._kSide > 0) === (i === 1)) { const D = this.diag.kick; D.corr = D.cut = D.legK = D.sim = 0; }
+      const putFoot = (q) => { if (legK > 0.01) q.slerp(clipFootQ, legK); setWorldQuat(L.foot, q); };
       v.subVectors(A, H);
       let dist = v.length();
       this.diag.reachErr[i] = Math.max(0, dist - dmax);
@@ -398,14 +580,28 @@ export class PlayerRig {
       dir.subVectors(A, H).normalize();
       bend.copy(ff).multiplyScalar(0.5).addScaledVector(f, 0.5).addScaledVector(r, L.side * 0.12);
       // бьющая нога на весу: колено смотрит вверх и наружу, а не строго вперёд — иначе бедро выворачивается
-      if (isKickFoot) bend.addScaledVector(UP, 0.9 * kh).addScaledVector(r, L.side * 0.45 * kh);
+      if (isKickFoot) bend.multiplyScalar(1 - 0.6 * Math.min(1, KP.high)).addScaledVector(UP, KP.kneeUp).addScaledVector(r, L.side * KP.kneeOut);
+      // колено бьющей ноги смотрит туда же, куда бедро в клипе
+      if (legK > 0.01) bend.multiplyScalar(1 - 0.9 * legK).addScaledVector(cA.copy(L.restDir).applyQuaternion(_q.copy(yawQ).multiply(pose.get(L.name + 'UpLeg'))), 2 * legK);
       bend.addScaledVector(dir, -bend.dot(dir)).normalize();
+      // анатомия колена: оно сгибается только вперёд-вверх относительно корпуса и не перескакивает за кадр.
+      // Какой бы ни была подсказка (клип, удар, шаг), колено позади линии бедро — стопа не допускается.
+      if (L.pole && dt > 0) { bend.lerpVectors(L.pole, bend, Math.min(1, this.adapt.kneeRate * dt)); bend.addScaledVector(dir, -bend.dot(dir)).normalize(); }
+      hinge.copy(f).addScaledVector(UP, 0.6); hinge.addScaledVector(dir, -hinge.dot(dir));
+      if (hinge.lengthSq() > 1e-6) {
+        // предел — после сглаживания: он жёсткий, сглаживание не может оставить колено позади
+        hinge.normalize();
+        // у ноги, отведённой в сторону для удара с лёта, колено смотрит наружу — предел для неё только «не назад»
+        const front = bend.dot(hinge), need = this.adapt.kneeFront * (isKickFoot ? 1 - 0.9 * Math.min(1, KP.high) : 1);
+        if (front < need) bend.addScaledVector(hinge, need - front).normalize();
+      }
+      (L.pole || (L.pole = new THREE.Vector3())).copy(bend);
       const cosA = clamp((L.l1 * L.l1 + dist * dist - L.l2 * L.l2) / (2 * L.l1 * dist), -1, 1);
       knee.copy(H).addScaledVector(dir, L.l1 * cosA).addScaledVector(bend, L.l1 * Math.sqrt(1 - cosA * cosA));
       axis.crossVectors(bend, dir);
       setWorldQuat(L.thigh.bone, basisQuat(v.subVectors(knee, H).normalize(), axis, _q).multiply(L.thigh.k));
       setWorldQuat(L.shin.bone, basisQuat(v.subVectors(A, knee).normalize(), axis, _q).multiply(L.shin.k));
-      if (isKickFoot && kh > 0.05) {
+      if (isKickFoot && KP.along > 0.05) {
         // стопа продолжает линию голени с оттянутым носком и смотрит по направлению удара
         const shin = v.subVectors(A, knee).normalize();
         const fwdDir = new THREE.Vector3().copy(shin).multiplyScalar(0.75).addScaledVector(f, 0.65).normalize();
@@ -416,10 +612,10 @@ export class PlayerRig {
         // покой стопы задан в осях «вперёд = +Z модели»: переводим желаемую ориентацию в те же оси
         const restFrame = new THREE.Quaternion().setFromRotationMatrix(_m.makeBasis(new THREE.Vector3().crossVectors(UP, this.F0).normalize(), UP, this.F0));
         des.multiply(restFrame.invert()).multiply(L.footRest);
-        setWorldQuat(L.foot, flat.multiply(L.footRest).slerp(des, Math.min(1, kh * 1.3)));
+        putFoot(flat.multiply(L.footRest).slerp(des, Math.min(1, KP.along)));
       } else {
         const footQ = _q.setFromAxisAngle(fr, -pitch).multiply(this._yawQuat(ft.yaw, _q2)).multiply(L.footRest);
-        setWorldQuat(L.foot, footQ);
+        putFoot(footQ);
       }
     }
 
