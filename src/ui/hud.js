@@ -53,7 +53,7 @@ export class Hud {
       this.superBar.querySelector('b').style.width = scKey + '%';
       this.superBar.querySelector('[data-v]').textContent = sc >= 1 ? 'готов' : scKey + '%';
     }
-    const mode = p.slide ? 'Подкат' : p.reach ? 'Тянется за мячом' : p.juggle ? 'Чеканка' + (p.juggle.n ? ' ×' + p.juggle.n : '') : p.lunge ? 'Рывок' : p.mode === 'guard' ? 'Защитная стойка' : p.mode === 'sprint' ? 'Спринт' : p.mode === 'control' ? 'Близкий контроль' : 'Бег';
+    const mode = p.fall && p.fall.phase !== 'air' ? (p.fall.phase === 'rise' ? 'Встаёт' : p.fall.phase === 'land' ? 'Приземление' : 'Упал') : p.slide ? 'Подкат' : p.reach ? 'Тянется за мячом' : p.juggle ? 'Чеканка' + (p.juggle.n ? ' ×' + p.juggle.n : '') : p.lunge ? 'Рывок' : p.mode === 'guard' ? 'Защитная стойка' : p.mode === 'sprint' ? 'Спринт' : p.mode === 'control' ? 'Близкий контроль' : 'Бег';
     const phase = !k ? (p.possession ? 'мяч под контролем' : 'без мяча')
       : k.plan ? 'выход на мяч — удар в касание'
         : k.phase === 'charge' ? 'заряд — направления управляют прицелом'

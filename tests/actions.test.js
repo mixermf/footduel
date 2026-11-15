@@ -131,3 +131,139 @@ test('чеканка одной кнопкой: с мячом пробел по�
   assert.ok(touches >= 4, 'серия идёт без повторного нажатия: ' + touches);
   assert.ok(p.juggle);
 });
+
+test('bicycle kick: scissors in the air, fall on the back or on the side, get up; no control until up', () => {
+  const run = (dz) => {
+    const w = make('motor'), p = w.player, b = w.ball;
+    for (let i = 0; i < 90; i++) w.step(inp({ mx: -1 }));
+    for (let i = 0; i < 60; i++) w.step(inp());
+    const x0 = 0;
+    b.x = p.x; b.z = p.z + dz; b.y = 2.6; b.vx = b.vy = b.vz = 0;
+    const r = { kick: null, fell: false, roll: 0, lead: 0, cross: 0, down: 0, moved: 0, upAt: -1, landAt: -1, x0 };
+    let xLie = null;
+    for (let i = 0; i < 420; i++) {
+      // the player mashes movement and kick the whole time: nothing may happen until he is up
+      w.step(inp({ kickHeld: i < 40, kickPressed: i === 0 || i === 150, mx: i > 60 ? 1 : 0, lobPressed: i === 160 }));
+      const k = p.kick, fl = p.fall;
+      for (const e of w.events) { if (e.type === 'kick') r.kick = e; if (e.type === 'fall') { r.fell = true; r.landAt = i; r.roll = e.roll; } }
+      if (fl && fl.phase === 'air' && k) {
+        const kf = p.feet[fl.kickFoot], ff = p.feet[1 - fl.kickFoot];
+        if (k.phase === 'windup') r.lead = Math.max(r.lead, ff.h - kf.h); // free leg goes up first
+        if (k.phase === 'curl') r.cross = Math.max(r.cross, kf.h - ff.h); // then the kicking leg is above
+      }
+      if (fl && fl.phase !== 'air') {
+        if (fl.phase === 'down' && fl.k >= 1) { r.down++; if (xLie === null) xLie = [p.x, p.z]; }
+        assert.equal(p.kick, null, 'no kick while down');
+        assert.equal(p.slide, null, 'no slide while down');
+      }
+      if (r.fell && !fl && r.upAt < 0) { r.upAt = i; r.moved = xLie ? Math.hypot(p.x - xLie[0], p.z - xLie[1]) : 9; }
+    }
+    return { r, p };
+  };
+  const a = run(0.05), s = run(0.6);
+  for (const { r, p } of [a, s]) {
+    assert.ok(r.kick && r.kick.bike, 'bicycle kick happened');
+    assert.ok(r.lead > 0.45, 'free leg leads in the windup: ' + r.lead.toFixed(2));
+    assert.ok(r.cross > 0.6, 'legs cross over at contact: ' + r.cross.toFixed(2));
+    assert.ok(r.fell && r.down > 8, 'the player lies on the turf: ' + r.down);
+    assert.ok(r.upAt > 0 && (r.upAt - r.landAt) / 120 < 1.3, 'gets up in about a second');
+    assert.ok(r.moved < 0.5, 'does not slide around while down: ' + r.moved.toFixed(2));
+    assert.equal(p.fall, null);
+    assert.ok(!p.feet[0].ctl && !p.feet[1].ctl, 'feet are back in the normal cycle');
+  }
+  assert.ok(Math.abs(a.r.roll) < 0.3, 'ball overhead: falls on the back, roll ' + a.r.roll.toFixed(2));
+  assert.ok(Math.abs(s.r.roll) > 0.7, 'diving sideways: falls on the side, roll ' + s.r.roll.toFixed(2));
+});
+
+test('slide tackle: the next one is available right after getting up', () => {
+  const w = make('motor'), p = w.player, T = w.P.tackle;
+  let starts = 0, was = false;
+  for (let i = 0; i < 240; i++) {
+    w.step(inp({ lobPressed: i % 6 === 0, mz: 1 }));
+    if (p.slide && !was) starts++;
+    was = !!p.slide;
+  }
+  assert.ok(starts >= 2, 'slides in 2 s: ' + starts);
+  assert.ok(T.recover + T.cooldown < 0.4);
+});
+
+test('flying side volley: low take-off, kick with the body laid sideways; the leg carries on, the body turns and lands on the other leg', () => {
+  for (const [h, dx, dz, vx] of [[2.3, 0.5, 0.3, 0], [2.0, 0.6, -0.4, 0], [2.6, 2.5, 0.5, 5]]) {
+    const w = make('motor'), p = w.player, b = w.ball;
+    for (let i = 0; i < 20; i++) w.step(inp());
+    b.x = p.x + dx; b.z = p.z + dz; b.y = h; b.vx = -vx; b.vy = b.vz = 0;
+    const yaw0 = p.yaw;
+    let kick = null, top = 0, side = 0, footH = 0, byHit = 0, hitAt = -1, landAt = -1, upAt = -1, first = -1, kf = -1, carry = 0, fell = false, kx = 0;
+    for (let i = 0; i < 420; i++) {
+      w.step(inp({ kickHeld: i < 60, kickPressed: i === 0, mx: i > 80 ? -1 : 0 }));
+      top = Math.max(top, p.y);
+      const fl = p.fall;
+      for (const e of w.events) {
+        if (e.type === 'kick') { kick = e; hitAt = i; side = p.kick.fly; kf = p.kick.footSide > 0 ? 1 : 0; footH = p.feet[kf].h - p.y; byHit = b.y; kx = p.x; assert.ok(b.vx > 8, 'the ball goes to the goal: ' + b.vx.toFixed(1)); }
+        if (e.type === 'fall') fell = true;
+      }
+      if (hitAt >= 0 && fl) carry = Math.max(carry, -(p.feet[kf].x - p.x) * fl.ux - (p.feet[kf].z - p.z) * fl.uz); // kicking foot crosses to the other side
+      if (fl && fl.phase === 'land') {
+        if (landAt < 0) landAt = i;
+        if (first < 0) { if (p.feet[1 - kf].planted) first = 1 - kf; else if (p.feet[kf].planted) first = kf; }
+      }
+      if (landAt >= 0 && !fl && upAt < 0) upAt = i;
+    }
+    const tag = `h=${h} dz=${dz}: `, turned = Math.abs(Math.atan2(Math.sin(p.yaw - yaw0), Math.cos(p.yaw - yaw0)));
+    assert.ok(kick && kick.fly, tag + 'flying side volley happened');
+    assert.equal(side, dz > 0 ? 1 : -1, tag + 'kicks with the leg on the ball side'); // the player faces +x: +z is his right
+    assert.ok(top < 0.8, tag + 'no jump to the ball level: ' + top.toFixed(2));
+    assert.ok(byHit - top > 0.9, tag + 'the ball is well above the take-off height: ' + (byHit - top).toFixed(2));
+    assert.ok(footH > 0.85, tag + 'the kicking foot is above the hips: ' + footH.toFixed(2));
+    assert.ok(carry > 0.02, tag + 'the kicking leg carries on across the body: ' + carry.toFixed(2));
+    assert.equal(fell, false, tag + 'the player does not fall');
+    assert.equal(first, 1 - kf, tag + 'lands on the other leg first');
+    assert.ok(upAt > 0 && (upAt - landAt) / 120 < 0.7, tag + 'back in play within 0.7 s of landing');
+    assert.equal(p.fall, null);
+    assert.ok(!p.feet[0].ctl && !p.feet[1].ctl);
+    void turned;
+  }
+  // the turn itself, without input after the kick
+  const w0 = make('motor'), q = w0.player, b0 = w0.ball;
+  for (let i = 0; i < 20; i++) w0.step(inp());
+  b0.x = q.x + 0.5; b0.z = q.z + 0.3; b0.y = 2.3; b0.vx = b0.vy = b0.vz = 0;
+  const y0 = q.yaw;
+  for (let i = 0; i < 300; i++) w0.step(inp({ kickHeld: i < 60, kickPressed: i === 0 }));
+  const d = Math.atan2(Math.sin(q.yaw - y0), Math.cos(q.yaw - y0));
+  assert.ok(Math.abs(d) > 2.6, 'the body ends turned almost fully around: ' + d.toFixed(2));
+  // a ball at hip height is still an ordinary volley, without the flight
+  const w = make('motor'), p = w.player, b = w.ball;
+  for (let i = 0; i < 20; i++) w.step(inp());
+  b.x = p.x + 0.6; b.z = p.z + 0.2; b.y = 1.1; b.vx = b.vy = b.vz = 0;
+  let kick = null;
+  for (let i = 0; i < 200; i++) { w.step(inp({ kickHeld: i < 30, kickPressed: i === 0 })); for (const e of w.events) if (e.type === 'kick') kick = e; assert.equal(p.fall, null); }
+  assert.ok(kick && !kick.fly);
+});
+
+test('flying side volley: arrows do nothing until touchdown, the player does not fly on after the kick, control is back on landing', () => {
+  const run = (mx, mz) => {
+    const w = make('motor'), p = w.player, b = w.ball;
+    for (let i = 0; i < 20; i++) w.step(inp());
+    b.x = p.x + 0.5; b.z = p.z + 0.3; b.y = 2.3; b.vx = b.vy = b.vz = 0;
+    const r = { hit: null, land: null, landAt: -1, freeAt: -1, spunAt: -1, hitAt: -1, yawHit: 0 };
+    for (let i = 0; i < 260; i++) {
+      w.step(inp({ kickHeld: i < 60, kickPressed: i === 0, mx, mz }));
+      for (const e of w.events) if (e.type === 'kick') { r.hit = [p.x, p.z]; r.hitAt = i; r.yawHit = p.yaw; }
+      const fl = p.fall;
+      if (r.hitAt >= 0 && r.spunAt < 0 && Math.abs(Math.atan2(Math.sin(p.yaw - r.yawHit), Math.cos(p.yaw - r.yawHit))) > 2.6) r.spunAt = i;
+      if (fl && fl.phase === 'land' && !r.land) { r.land = [p.x, p.z]; r.landAt = i; }
+      if (r.land && !fl && r.freeAt < 0) r.freeAt = i;
+    }
+    return r;
+  };
+  const idle = run(0, 0), fwd = run(1, 0), side = run(0, 1);
+  for (const r of [fwd, side]) {
+    assert.deepEqual(r.hit, idle.hit, 'arrows do not move the player before the kick (they only aim)');
+    assert.deepEqual(r.land, idle.land, 'arrows do not move the player in flight');
+    assert.ok(r.freeAt - r.landAt <= 2, 'with a command held, control is back right on touchdown: ' + (r.freeAt - r.landAt));
+  }
+  assert.ok(Math.hypot(idle.land[0] - idle.hit[0], idle.land[1] - idle.hit[1]) < 0.3, 'after the kick the player comes down almost in place');
+  assert.ok((idle.spunAt - idle.hitAt) / 120 < 0.4, 'the turn is done within 0.4 s of the kick: ' + ((idle.spunAt - idle.hitAt) / 120).toFixed(2));
+  assert.ok(idle.spunAt < idle.landAt, 'and before touchdown');
+  assert.ok((idle.freeAt - idle.landAt) / 120 > 0.4, 'without a command the low landing stance plays out');
+});

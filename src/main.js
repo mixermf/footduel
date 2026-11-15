@@ -263,6 +263,7 @@ function handleEvents(events, me = 0, accept = null) {
         break;
       case 'juggle_start': if (mine) hud.showToast('Чеканка: удар — с лёта, пробел — подбить выше', { ms: 1200 }); break;
       case 'slide': sfx.play('body', 0.35); break;
+      case 'fall': sfx.play('body', 0.7); scene.shake = Math.max(scene.shake, 0.04); break;
       case 'tackle':
         sfx.play('kick', 0.5); scene.contactFlash(b.x, b.y, b.z, 0.5);
         if (mine) { hud.showToast(e.air ? 'Подкат в прыжке!' : 'Подкат!', { ms: 600 }); if (game.settings.vibration) input.rumble(0.4, 80); }
@@ -275,6 +276,7 @@ function handleEvents(events, me = 0, accept = null) {
         if (e.kind === 'super') hud.showToast('СУПЕРУДАР!', { big: true, ms: 900 });
         else if (e.kind === 'lob') hud.showToast('Навес', { ms: 500 });
         else if (e.bike) hud.showToast('Через себя!', { big: true, ms: 800 });
+        else if (e.fly) hud.showToast('Сбоку в полёте!', { big: true, ms: 800 });
         else if (e.jump) hud.showToast('Удар в прыжке!', { ms: 600 });
         else if (e.volley) hud.showToast('С лёта!', { ms: 500 });
         else if (e.firstTime) hud.showToast('В касание!', { ms: 450 });
@@ -436,7 +438,7 @@ function runFrame(now) {
   const mine = world.players[sess && sess.me === 1 ? 1 : 0];
   scene.updateBall(view.bx, view.by, view.bz, cur.bqx, cur.bqy, cur.bqz, cur.bqw);
   scene.updateNets(view.bx, view.by, view.bz, dtReal);
-  const auxOf = (q) => ({ ball, kick: q.kick, gesture: q.gesture, guard: q.guard || !!q.lunge, withBall: !!q.possession, juggle: !!q.juggle, slide: q.slide, reach: q.reach });
+  const auxOf = (q) => ({ ball, kick: q.kick, gesture: q.gesture, guard: q.guard || !!q.lunge, withBall: !!q.possession, juggle: !!q.juggle, slide: q.slide, reach: q.reach, fall: q.fall });
   rig.update(view, auxOf(P0), dtVis);
   if (online && P1) rig2.update(view.p2, auxOf(P1), dtVis);
   scene.updateAim(mine.kick, world.P);
