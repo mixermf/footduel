@@ -104,18 +104,22 @@ game.exportLog = () => {
 
 // ---------- меню ----------
 const CONTROLS = [
-  ['Движение / прицел в окне удара', 'WASD, стрелки', 'левый стик, крестовина'],
-  ['Заряд и удар при отпускании', 'J', 'X / □'],
-  ['Прыжок; при владении — подброс; ещё раз, пока мяч в воздухе, — чеканка', 'Пробел', 'Y / △'],
-  ['В чеканке: удар с лёта; высокий подбив; движение', 'J; Пробел; WASD', 'X / □; Y / △; стик'],
-  ['Удар через себя: спиной к воротам по мячу в воздухе', 'J', 'X / □'],
+  ['Бег; с мячом в окне удара — направление мяча', 'стрелки', 'левый стик, крестовина'],
+  ['Удар: заряд, удар при отпускании (с мячом и без)', 'D', 'X / □'],
+  ['Ускорение', 'W', 'RB / R1'],
+  ['С мячом: навес «парашютом» — заряд задаёт дальность', 'A', 'B / ○'],
+  ['С мячом: суперудар при полной шкале', 'S', 'LB / L1'],
+  ['С мячом: чеканка; в чеканке — подбить выше', 'Пробел', 'Y / △'],
+  ['В чеканке: удар с лёта, навес, суперудар', 'D; A; S', 'X / □; B / ○; LB / L1'],
+  ['Удар через себя: спиной к воротам по мячу в воздухе', 'D', 'X / □'],
+  ['Без мяча: подкат (по направлению или к мячу)', 'A', 'B / ○'],
+  ['Без мяча: прыжок; с подкатом — подкат в прыжке', 'Пробел; Пробел + A', 'Y / △; Y + B'],
+  ['Без мяча: дотянуться до мяча ближайшей ногой', 'S (удерживать)', 'LB / L1 (удерживать)'],
+  ['Без мяча: защитная стойка, мягкий приём телом', 'C (удерживать)', 'LT / L2 (удерживать)'],
+  ['Рывок в стойке', 'C + направление + Пробел', 'LT + стик + Y / △'],
   ['Точный приём; удержание — близкий контроль', 'E', 'A / × ; RT / R2'],
   ['Разворот к воротам и контроль', 'Q', 'LT / L2'],
-  ['Спринт', 'C', 'RB / R1'],
-  ['Защитная стойка без мяча: лицом к мячу, мягкий приём телом', 'Shift (удерживать)', 'LT / L2 (удерживать)'],
-  ['Рывок в стойке', 'Shift + направление + Пробел', 'LT + стик + Y / △'],
   ['Вернуть мяч; подача; щит вместо ворот (песочница)', 'R; F; G', 'меню паузы'],
-  ['Финт, суперудар', 'T, X', 'B / ○, LB / L1 — следующий этап'],
 ];
 
 const pct = (v) => Math.round(v * 100) + '%';
@@ -257,12 +261,20 @@ function handleEvents(events, me = 0, accept = null) {
         sfx.play('touch'); scene.contactFlash(b.x, e.kind === 'juggle' ? b.y : 0.02, b.z, 0);
         if (e.kind === 'juggle' && mine && e.n >= 3) hud.showToast('Чеканка ×' + e.n, { ms: 500 });
         break;
-      case 'juggle_start': if (mine) hud.showToast('Чеканка: удар — с лёта, прыжок — подбить выше', { ms: 1200 }); break;
+      case 'juggle_start': if (mine) hud.showToast('Чеканка: удар — с лёта, пробел — подбить выше', { ms: 1200 }); break;
+      case 'slide': sfx.play('body', 0.35); break;
+      case 'tackle':
+        sfx.play('kick', 0.5); scene.contactFlash(b.x, b.y, b.z, 0.5);
+        if (mine) { hud.showToast(e.air ? 'Подкат в прыжке!' : 'Подкат!', { ms: 600 }); if (game.settings.vibration) input.rumble(0.4, 80); }
+        break;
+      case 'super_empty': if (mine) hud.showToast('Суперудар не готов: ' + Math.round(e.charge * 100) + '%', { ms: 600 }); break;
       case 'kick':
         sfx.play('kick', Math.min(1, e.speed / 24)); scene.contactFlash(b.x, b.y, b.z, 0.6 + e.charge + (e.firstTime ? 0.5 : 0));
-        scene.shake = 0.03 + 0.09 * Math.min(1, e.speed / 24);
+        scene.shake = 0.03 + 0.09 * Math.min(1, e.speed / 24) + (e.kind === 'super' ? 0.12 : 0);
         if (!mine) break;
-        if (e.bike) hud.showToast('Через себя!', { big: true, ms: 800 });
+        if (e.kind === 'super') hud.showToast('СУПЕРУДАР!', { big: true, ms: 900 });
+        else if (e.kind === 'lob') hud.showToast('Навес', { ms: 500 });
+        else if (e.bike) hud.showToast('Через себя!', { big: true, ms: 800 });
         else if (e.jump) hud.showToast('Удар в прыжке!', { ms: 600 });
         else if (e.volley) hud.showToast('С лёта!', { ms: 500 });
         else if (e.firstTime) hud.showToast('В касание!', { ms: 450 });
@@ -271,7 +283,7 @@ function handleEvents(events, me = 0, accept = null) {
       case 'receive':
         sfx.play(e.quality >= 1 ? 'receive' : 'receive_bad');
         if (!mine) break;
-        hud.showToast(e.quality >= 1 ? 'Точный приём' : e.guard ? 'Приём в стойке' : e.auto === 'stop' ? 'Остановил' : e.auto === 'cushion' ? 'Принял на щёчку' : 'Неполный приём', { ms: 600 });
+        hud.showToast(e.reach ? 'Дотянулся' : e.quality >= 1 ? 'Точный приём' : e.guard ? 'Приём в стойке' : e.auto === 'stop' ? 'Остановил' : e.auto === 'cushion' ? 'Принял на щёчку' : 'Неполный приём', { ms: 600 });
         if (game.settings.vibration) input.rumble(0.25, 60);
         break;
       case 'header': sfx.play('body', 0.6); if (mine) hud.showToast('Игра головой', { ms: 500 }); break;
@@ -311,7 +323,6 @@ function stepSandbox(dtReal) {
     if (input.take('ballReturn')) pending.ret = true;
     if (input.take('serve')) nextServe();
     if (input.take('wall')) toggleWall();
-    if (input.pressed.has('feint') || input.pressed.has('super')) hud.showToast('Финты и суперудар — следующий этап', { ms: 700 });
   }
   if (game.simPaused) { acc = game.stepOnce ? simDt : 0; game.stepOnce = false; }
   else acc += dtReal * game.timeScale;
@@ -425,8 +436,9 @@ function runFrame(now) {
   const mine = world.players[sess && sess.me === 1 ? 1 : 0];
   scene.updateBall(view.bx, view.by, view.bz, cur.bqx, cur.bqy, cur.bqz, cur.bqw);
   scene.updateNets(view.bx, view.by, view.bz, dtReal);
-  rig.update(view, { ball, kick: P0.kick, gesture: P0.gesture, guard: P0.guard || !!P0.lunge, withBall: !!P0.possession, juggle: !!P0.juggle }, dtVis);
-  if (online && P1) rig2.update(view.p2, { ball, kick: P1.kick, gesture: P1.gesture, guard: P1.guard || !!P1.lunge, withBall: !!P1.possession, juggle: !!P1.juggle }, dtVis);
+  const auxOf = (q) => ({ ball, kick: q.kick, gesture: q.gesture, guard: q.guard || !!q.lunge, withBall: !!q.possession, juggle: !!q.juggle, slide: q.slide, reach: q.reach });
+  rig.update(view, auxOf(P0), dtVis);
+  if (online && P1) rig2.update(view.p2, auxOf(P1), dtVis);
   scene.updateAim(mine.kick, world.P);
   scene.updateCamera(view.px, view.pz, view.yaw, dtReal);
   game.lab?.onFrame(dtReal);

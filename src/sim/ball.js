@@ -82,6 +82,11 @@ export function stepBall(b, dt, P, events, bodyHook) {
         const impact = -b.vy;
         b.vy = impact * B.groundRestitution;
         b.vx *= B.groundTangent; b.vz *= B.groundTangent;
+        const sx = r * b.wz, sz = -r * b.wx, sl = Math.hypot(sx, sz); // backspin: contact point slips forward, friction brakes the ball
+        if (sl > 0.3 && sx * b.vx + sz * b.vz > 0) {
+          const dv = Math.min(sl, B.spinGrip * (1 + B.groundRestitution) * impact, Math.hypot(b.vx, b.vz));
+          b.vx -= (sx / sl) * dv; b.vz -= (sz / sl) * dv; b.wx *= 0.3; b.wz *= 0.3;
+        }
         if (impact > 1.5) events.push({ type: 'bounce', speed: impact });
       } else if (b.vy < 0) b.vy = 0;
     }

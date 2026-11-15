@@ -8,7 +8,7 @@ export class Hud {
     this.state = el('div', 'hud-state');
     this.bars = el('div', 'hud-bars');
     this.charge = el('div', 'bar', '<label><span>Сила удара</span><span data-v></span></label><i><b></b></i>');
-    this.superBar = el('div', 'bar off', '<label><span>Суперудар</span><span>позже</span></label><i><b></b></i>');
+    this.superBar = el('div', 'bar off', '<label><span>Суперудар</span><span data-v></span></label><i><b></b></i>');
     this.bars.append(this.charge, this.superBar);
     this.hint = el('div', 'hud-hint');
     this.toast = el('div', 'hud-toast');
@@ -46,7 +46,14 @@ export class Hud {
     const charge = k ? k.charge : 0;
     this.charge.querySelector('b').style.width = Math.round(charge * 100) + '%';
     this.charge.querySelector('[data-v]').textContent = k ? Math.round(charge * 100) + '%' : '';
-    const mode = p.juggle ? 'Чеканка' + (p.juggle.n ? ' ×' + p.juggle.n : '') : p.lunge ? 'Рывок' : p.mode === 'guard' ? 'Защитная стойка' : p.mode === 'sprint' ? 'Спринт' : p.mode === 'control' ? 'Близкий контроль' : 'Бег';
+    const sc = p.superCharge || 0, scKey = Math.round(sc * 100);
+    if (scKey !== this._superKey) {
+      this._superKey = scKey;
+      this.superBar.className = 'bar' + (sc >= 1 ? ' full' : ' off');
+      this.superBar.querySelector('b').style.width = scKey + '%';
+      this.superBar.querySelector('[data-v]').textContent = sc >= 1 ? 'готов' : scKey + '%';
+    }
+    const mode = p.slide ? 'Подкат' : p.reach ? 'Тянется за мячом' : p.juggle ? 'Чеканка' + (p.juggle.n ? ' ×' + p.juggle.n : '') : p.lunge ? 'Рывок' : p.mode === 'guard' ? 'Защитная стойка' : p.mode === 'sprint' ? 'Спринт' : p.mode === 'control' ? 'Близкий контроль' : 'Бег';
     const phase = !k ? (p.possession ? 'мяч под контролем' : 'без мяча')
       : k.plan ? 'выход на мяч — удар в касание'
         : k.phase === 'charge' ? 'заряд — направления управляют прицелом'
@@ -54,13 +61,18 @@ export class Hud {
     const title = net ? `Сеть${net.lobby ? ' · ' + net.lobby.code : ''} · пинг ${Math.round(net.rtt)} мс${net.rtt > 110 ? ' (высокий)' : ''}` : 'Песочница';
     const st = `${title} · <b>${mode}</b> · ${phase}${extra ? ' · ' + extra : ''}`;
     if (st !== this._stateKey) { this._stateKey = st; this.state.innerHTML = st; }
-    const hk = input.lastDevice + JSON.stringify(input.keys.kick) + (net ? 'n' : 's');
+    const has = !!(p.possession || p.juggle);
+    const hk = input.lastDevice + JSON.stringify(input.keys) + (net ? 'n' : 's') + (has ? 'b' : '');
     if (hk !== this._hintKey) {
       this._hintKey = hk;
       const h = (a) => `<kbd>${input.hintFor(a)}</kbd>`;
-      const move = input.lastDevice === 'keyboard' ? '<kbd>WASD</kbd>' : '<kbd>левый стик</kbd>';
-      const ctl = input.lastDevice === 'keyboard' ? h('receive') : `${h('receive')}/${h('control')}`;
-      this.hint.innerHTML = `${move} движение · ${h('kick')} удар · ${h('jump')} прыжок · ${ctl} приём/контроль · ${h('faceGoal')} к воротам · ${h('sprint')} спринт · ${input.lastDevice === 'keyboard' ? h('guard') : h('faceGoal')} стойка, с ${h('jump')} рывок · ${h('pause')} пауза`
+      const move = input.lastDevice === 'keyboard' ? '<kbd>стрелки</kbd>' : '<kbd>левый стик</kbd>';
+      const guard = input.lastDevice === 'keyboard' ? h('guard') : h('faceGoal');
+      // подсказка зависит от того, у игрока ли мяч: те же кнопки делают разное
+      this.hint.innerHTML = (has
+        ? `<b>С мячом:</b> ${move} бег и направление · ${h('kick')} удар · ${h('lob')} навес · ${h('super')} суперудар · ${h('jump')} чеканка · ${h('sprint')} ускорение`
+        : `<b>Без мяча:</b> ${move} бег · ${h('kick')} удар · ${h('lob')} подкат · ${h('super')} дотянуться · ${h('jump')} прыжок · ${guard} стойка · ${h('sprint')} ускорение`)
+        + ` · ${h('pause')} пауза`
         + (input.lastDevice === 'keyboard' && !net ? ' · <kbd>R</kbd> мяч · <kbd>F</kbd> подача · <kbd>G</kbd> щит' : '');
     }
     if (this._toastT > 0) { this._toastT -= dt; if (this._toastT <= 0) this.toast.classList.remove('show'); }

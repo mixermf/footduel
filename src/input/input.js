@@ -2,19 +2,21 @@
 // Разделены удержание и события нажатия; автоповтор клавиш не создаёт событий.
 
 export const DEFAULT_KEYS = {
-  up: ['KeyW', 'ArrowUp'], down: ['KeyS', 'ArrowDown'], left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
-  kick: ['KeyJ'], jump: ['Space'], receive: ['KeyE'], faceGoal: ['KeyQ'],
-  sprint: ['KeyC'], guard: ['ShiftLeft', 'ShiftRight'], feint: ['KeyT'], super: ['KeyX'],
+  // стрелки — бег и направление мяча; D — удар, W — ускорение, A — навес (без мяча подкат), S — суперудар (без мяча дотянуться),
+  // пробел — чеканка (без мяча прыжок), C — защитная стойка
+  up: ['ArrowUp'], down: ['ArrowDown'], left: ['ArrowLeft'], right: ['ArrowRight'],
+  kick: ['KeyD'], sprint: ['KeyW'], lob: ['KeyA'], super: ['KeyS'], jump: ['Space'], guard: ['KeyC'],
+  receive: ['KeyE'], faceGoal: ['KeyQ'],
   pause: ['Escape'], confirm: ['Enter'], ballReturn: ['KeyR'], serve: ['KeyF'], wall: ['KeyG'],
 };
 
 // Стандартная раскладка Gamepad API (позиции кнопок)
 export const DEFAULT_PAD = {
-  kick: 2, jump: 3, receive: 0, control: 7, faceGoal: 6, sprint: 5, feint: 1, super: 4,
+  kick: 2, jump: 3, receive: 0, control: 7, faceGoal: 6, sprint: 5, lob: 1, super: 4,
   pause: 9, confirm: 0, back: 1, up: 12, down: 13, left: 14, right: 15,
 };
 
-const STORAGE_KEY = 'soccer-duel-desktop.bindings.v2'; // v2: Shift — защитная стойка
+const STORAGE_KEY = 'soccer-duel-desktop.bindings.v3'; // v3: стрелки — движение, D/W/A/S — действия, C — стойка
 
 export function findConflicts(keys) {
   const seen = new Map(), conflicts = [];
@@ -163,8 +165,9 @@ export class Input {
     out.kickPressed = edges && p.has('kick');
     out.jumpPressed = edges && p.has('jump');
     out.receivePressed = edges && p.has('receive');
-    out.feintPressed = edges && p.has('feint');
-    out.superPressed = edges && p.has('super');
+    out.feintPressed = false;
+    out.superPressed = edges && p.has('super'); out.superHeld = this._held('super');
+    out.lobPressed = edges && p.has('lob'); out.lobHeld = this._held('lob');
     return out;
   }
 
@@ -197,6 +200,6 @@ export class Input {
   }
 }
 
-const KEY_LABEL = { Space: 'Пробел', Escape: 'Esc', Enter: 'Enter', ShiftLeft: 'Shift', ArrowUp: '↑' };
+const KEY_LABEL = { Space: 'Пробел', Escape: 'Esc', Enter: 'Enter', ShiftLeft: 'Shift', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→' };
 const XBOX_NAMES = { 0: 'A', 1: 'B', 2: 'X', 3: 'Y', 4: 'LB', 5: 'RB', 6: 'LT', 7: 'RT', 9: 'Menu' };
 const PS_NAMES = { 0: '×', 1: '○', 2: '□', 3: '△', 4: 'L1', 5: 'R1', 6: 'L2', 7: 'R2', 9: 'Options' };

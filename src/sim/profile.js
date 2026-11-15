@@ -12,7 +12,7 @@ export function createProfile() {
       goalInset: 0.8, // рама ворот стоит в поле на этом расстоянии от торцевого борта; сетка тянется от рамы до борта
       reboundWall: false, // песочница: щит вместо правых ворот — мяч всегда возвращается в игру
       boardHeight: 1.0, // сплошной борт
-      fenceHeight: 5.0, // сетка-ограждение и сетчатый потолок: физическая высота возврата высоких мячей
+      fenceHeight: 8.0, // сетка-ограждение и сетчатый потолок: физическая высота возврата высоких мячей
     },
     ball: {
       radius: 0.11, gravity: 9.81,
@@ -21,7 +21,7 @@ export function createProfile() {
       groundRestitution: 0.6, groundTangent: 0.93, restSpeed: 0.8,
       wallRestitution: 0.68, wallTangent: 0.92,
       postRestitution: 0.62, netRestitution: 0.12, netOuterRestitution: 0.22,
-      spinDecayAir: 0.4, spinDecayGround: 3.0,
+      spinDecayAir: 0.4, spinDecayGround: 3.0, spinGrip: 0.5,
     },
     player: {
       height: 1.85, radius: 0.2,
@@ -53,12 +53,18 @@ export function createProfile() {
       // удар по летящему мячу в касание
       strikeHorizon: 0.8, strikeSpeed: 4.4, // глубина прогноза, с; скорость подстройки под мяч, м/с
       standReach: 0.8, jumpReach: 1.1, strikeSwing: 0.09, strikeWindup: 0.21, // время проноса стопы к мячу и замаха, с
-      legMin: 0.5, legMax: 0.84, legIdeal: 0.74, // допустимое расстояние таз — голеностоп для бьющей ноги, м
+      legMin: 0.58, legMax: 0.9, legIdeal: 0.83, // допустимое расстояние таз — голеностоп для бьющей ноги, м
       strikeJumpMax: 4.3, // досягаемость стопы стоя, запас прыжка, предел толчка
       // удар через себя: игрок спиной к воротам, мяч в воздухе рядом
       bikeMin: 0.95, bikeReach: 1.45, bikeHop: 0.18, bikeBonus: 1.08, errBike: 1.2,
       volleyBonus: 0.3, volleyMinCharge: 0.3, volleyOverMax: 4, // вклад встречной скорости мяча, минимальный заряд, запас сверх maxSpeed
       errVolley: 0.8, errIncoming: 0.06,
+      // навес «парашютом»: мяч уходит круто вверх и опускается почти отвесно. Заряд задаёт дальность точки приземления, м;
+      // прицел «выше/ниже» — крутизну, градусы. Скорость подбирается прогнозом полёта с учётом сопротивления воздуха.
+      lobMin: 3.5, lobMax: 16, lobPitchLow: 48, lobPitchHigh: 64, lobSpin: 30, errLob: 0.35,
+      // суперудар: доступен при полной шкале; шкала копится со временем и от удачных действий
+      superSpeed: 30, superErr: 0.35, superPitchLow: 2, superPitchHigh: 13,
+      superFill: 22, superJuggle: 0.05, superReceive: 0.1, superTackle: 0.12, // с за полную шкалу; прибавки за подбив, приём, подкат
       aimRateDigital: 4.5, aimRateAnalog: 14,
       errBase: 0.5, errSpeed: 0.5, errTurn: 2.5, errCharge: 1.0, errOffset: 6,
     },
@@ -71,6 +77,17 @@ export function createProfile() {
       quality: 0.72, lungeQuality: 0.6, // качество приёма без точного нажатия (1 — идеальный приём по таймингу)
       lungeSpeed: 6.4, lungeTime: 0.17, lungeRecover: 0.2, lungeCooldown: 0.4, // рывок: скорость, длительность, выход, пауза
       lungeAccel: 70,
+    },
+    // подкат: скольжение по покрытию с вынесенной вперёд ногой; стопа выбивает мяч по ходу. В прыжке — подкат в полёте.
+    tackle: {
+      speed: 6.4, time: 0.5, recover: 0.34, cooldown: 0.35, accel: 80, brake: 16,
+      reach: 0.8, extend: 0.12, // вынос ведущей стопы от корпуса, м; за сколько секунд нога выходит вперёд
+      hit: 0.1, knock: 3.2, pop: 1.2, hop: 0.72, // допуск контакта, м; прибавка скорости мяча, м/с; подскок мяча; доля силы прыжка из подката
+    },
+    // дотянуться до мяча: ближайшая нога выходит навстречу мячу и гасит его в зону контроля
+    reach: {
+      range: 1.0, minDist: 0.3, maxH: 0.7, lead: 0.24, horizon: 0.32, // дальность от корпуса, высота мяча, упреждение, с
+      hit: 0.06, settle: 0.4, front: 0.45, maxOut: 3.2, quality: 0.85, cooldown: 0.25, slow: 0.45,
     },
     receive: {
       window: 0.18, idealFrom: 0.03, idealTo: 0.12, passiveRestitution: 0.45,
