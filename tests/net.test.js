@@ -79,6 +79,7 @@ test('состояние: сохранение через JSON и восстан
 // ---------- стенд: комната и два клиента с задержкой сети ----------
 function rig({ delay = 6, jitter = 0 } = {}) {
   const room = new Room('TEST1', 7);
+  room.fixedSeed = 8; // чётный seed: мяч вводит игрок 0 — сценарии тестов на это рассчитаны
   const wire = []; // { at, fn }
   let now = 0, rnd = 12345;
   const rand = () => { rnd = (rnd * 1103515245 + 12345) & 0x7fffffff; return rnd / 0x7fffffff; };

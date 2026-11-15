@@ -30,6 +30,7 @@ export function createProfile() {
       turnRate: 16, turnSpring: 20, // предел угловой скорости, рад/с, и жёсткость разворота корпуса
       jumpSpeed: 3.7, airControl: 3,
       footSpread: 0.115, footRadius: 0.09, legReach: 0.78,
+      touchReach: 0.66, // дальность обычного касания стопой от корпуса: дальше игрок не тянется в шпагат, а делает шаг
     },
     dribble: {
       pushRun: 0.8, pushSprint: 1.7, pushControl: 0.55, // прибавка скорости мяча к скорости режима
@@ -73,7 +74,7 @@ export function createProfile() {
     juggle: {
       height: 0.32, lead: 0.14, reach: 0.26, // высота касания над опорой, м; за сколько секунд нога идёт к мячу; допуск по горизонтали, м
       pop: 2.7, highPop: 5.5, // вертикальная скорость обычного и высокого подбива, м/с
-      front: 0.36, side: 0.09, speed: 1.3, maxDist: 1.35,
+      front: 0.36, side: 0.09, speed: 1.3, maxDist: 1.6,
     },
     input: { buffer: 0.1, deadzone: 0.15 },
     match: { goalPause: 1.3, goalsToWin: 7, idleRestart: 6 }, // idleRestart: дуэль — мяч, замерший без владения, вводится заново, с

@@ -193,7 +193,7 @@ export class PlayerRig {
     if (ph === 'windup') { this._kc = -(kick.windDur - kick.t + (kick.dyn ? 0.09 : 0.075)); this._kSide = kick.footSide; this._kDyn = !!kick.dyn; this._kOn = true; }
     else if (ph === 'swing') { this._kc = Math.min(0, this._kc + dt); this._kOn = true; }
     else if (ph === 'curl') { this._kc = kick.t; this._kOn = true; }
-    else if (this._kOn) { this._kc += dt; if (this._kc > 0.38 || this._kc < 0) this._kOn = false; }
+    else if (this._kOn) { this._kc += dt; if (this._kc > 0.24 || this._kc < 0) this._kOn = false; }
     const kw = this._spring('wKick', this._kOn ? 1 : 0, 9, 1, dt);
     if (kw > 0.01) {
       const clip = this._kDyn && speed > 1.2 ? CLIPS.strikeJog : CLIPS.kick;
@@ -240,19 +240,20 @@ export class PlayerRig {
     const pose = this._mocapPose(s, aux, dt, f, r, speed);
     const gd = this._spring('guard', aux.guard ? 1 : 0, 5, 0.85, dt);
     // удар через себя: корпус заваливается назад, пока идёт удар и игрок в воздухе после него
-    if (kick && kick.bike && kicking) this._bikeOn = true; else if (!air) this._bikeOn = false;
-    const bk = this._spring('bike', this._bikeOn ? 1 : 0, 6, 0.9, dt); // защитная стойка: ниже, шире, руки в стороны
+    const bk = this._spring('bike', kick && kick.bike && kicking ? 1 : 0, 5, 0.95, dt); // защитная стойка: ниже, шире, руки в стороны
 
     // высота бьющей стопы над опорой: чем выше мяч, тем сильнее корпус уходит назад и вбок (удар с лёта)
     const kickSide = kick ? kick.footSide : 0;
     const kfh = kicking ? s.feet[kickSide > 0 ? 1 : 0].h - s.py : 0;
     const kh = this._spring('kh', kicking ? clamp((kfh - 0.3) / 0.5, 0, 1) : 0, 7, 0.8, dt);
     // добавочный наклон: поза клипа уже содержит наклон бега, здесь только ускорение, спринт и события
-    let leanFT = clamp(0.015 * this._acc.f + 0.07 * run + 0.045 * Math.max(0, speed - 2.6), -0.26, 0.36);
-    if (g && (g.type === 'chest' || g.type === 'hit')) leanFT -= 0.18 * gw;
+    let leanFT = clamp(0.015 * this._acc.f + 0.03 * run + 0.045 * Math.max(0, speed - 2.6), -0.26, 0.36);
+    if (g && g.type === 'chest') leanFT -= 0.18 * gw;
+    if (g && g.type === 'hit') leanFT -= 0.32 * gw; // непринятый мяч в корпус: игрока отбрасывает назад
     leanFT += 0.15 * gd;
-    const leanF = this._spring('leanF', leanFT, 3.4, 0.8, dt) - 0.32 * kh * (1 - bk) - 1.15 * bk;
-    const leanS = this._spring('leanS', clamp(0.017 * this._acc.r, -0.3, 0.3), 3.4, 0.75, dt) - kickSide * 0.42 * kh; // >0 — наклон вправо
+    if (air && !kicking) leanFT -= 0.12; // в прыжке корпус выпрямляется, а не горбится
+    const leanF = this._spring('leanF', leanFT, 3.4, 0.8, dt) - 0.2 * kh * (1 - bk) - 0.8 * bk;
+    const leanS = this._spring('leanS', clamp(0.017 * this._acc.r, -0.3, 0.3), 3.4, 0.75, dt) - kickSide * 0.24 * kh; // >0 — наклон вправо
     const yawQ = this._yawQuat(th, new THREE.Quaternion());
 
     // ----- аркадное усиление, чтобы движение читалось с игровой камеры
@@ -270,18 +271,21 @@ export class PlayerRig {
     const addQ = new THREE.Quaternion().setFromAxisAngle(r, -leanF).multiply(_q.setFromAxisAngle(f, -leanS)).multiply(twQ(1));
     // руки: противоход ногам; в ударе — баланс и размах; в прыжке — мах вверх и разведение
     const armQ = [-1, 1].map((side, i) => {
-      let swT = clamp(-side * dStride * 1.0, -0.38, 0.6) * (0.25 + 0.75 * run); // назад рука уходит меньше, чем вперёд
-      let abdT = 0.1 * run, flexT = Math.max(0, swT) * 0.7 - Math.min(0, swT) * 0.15;
+      // противоход ногам, одинаково вперёд и назад: руки не выносятся обе перед грудью
+      let swT = clamp(-side * dStride * 0.9, -0.45, 0.45) * (0.25 + 0.75 * run);
+      let abdT = 0.07 + 0.14 * run, flexT = 0.6 * run + Math.max(0, swT) * 0.35;
       if (kOn) {
+        // удар: рука со стороны бьющей ноги уходит назад, противоположная — вперёд и немного в сторону; без «самолёта»
         const same = (kSide > 0) === (side > 0);
-        if (kPre) { swT = same ? -0.95 * kAmp : 0.8 * kAmp; abdT = same ? 0.45 * kAmp : 1.05 * kAmp; flexT = same ? 0.2 : 0.35; }
-        else { swT = same ? 0.75 * kAmp : -0.7 * kAmp; abdT = same ? 0.4 * kAmp : 0.75 * kAmp; flexT = same ? 0.5 : 0.1; }
+        if (kPre) { swT = same ? -0.55 * kAmp : 0.45 * kAmp; abdT = same ? 0.25 * kAmp : 0.5 * kAmp; flexT = same ? 0.25 : 0.4; }
+        else { swT = same ? 0.4 * kAmp : -0.4 * kAmp; abdT = same ? 0.25 * kAmp : 0.4 * kAmp; flexT = same ? 0.45 : 0.25; }
       }
-      if (air) {
-        if (vyEst > 0.4) { swT = Math.max(swT, 1.15); abdT = Math.max(abdT, 0.4); flexT = 0.5; } // мах вверх на взлёте
-        else { swT = Math.max(swT, 0.25); abdT = Math.max(abdT, 0.9); flexT = 0.25; } // разведение на спуске
+      if (air && !kOn) {
+        // прыжок: согнутые руки идут вперёд-вверх до уровня плеч на взлёте и расходятся для баланса на спуске
+        if (vyEst > 0.4) { swT = 0.3; abdT = Math.max(abdT, 0.25); flexT = 0.7; }
+        else { swT = 0.1; abdT = Math.max(abdT, 0.4); flexT = 0.45; }
       }
-      if (bk > 0.01) { swT += (0.5 - swT) * bk; abdT = Math.max(abdT, 1.0 * bk); flexT += (0.3 - flexT) * bk; } // руки в стороны для баланса
+      if (bk > 0.01) { swT += (0.35 - swT) * bk; abdT = Math.max(abdT, 0.6 * bk); flexT += (0.4 - flexT) * bk; } // руки в стороны для баланса
       if (gd > 0.01 && !kOn && !air) { swT += (0.28 - swT) * gd; abdT = Math.max(abdT, 0.55 * gd); flexT += (0.75 - flexT) * gd; }
       const sw = this._spring('aSw' + i, swT, 5.5, 0.55, dt), abd = this._spring('aAbd' + i, abdT, 5, 0.65, dt), flex = this._spring('aFl' + i, flexT, 5.5, 0.6, dt);
       const upper = addQ.clone().multiply(_q.setFromAxisAngle(r, sw)).multiply(_q2.setFromAxisAngle(f, -side * abd));
@@ -311,9 +315,13 @@ export class PlayerRig {
         if (g.type === 'cushion') yaw += (i ? 1 : -1) * 1.0 * gw;
       }
       // через себя: свободная нога тоже идёт вверх — «ножницы»
-      if (bk > 0.01 && !(kicking && (kickSide > 0) === (i === 1))) { h += 0.45 * bk; x += f.x * 0.25 * bk; z += f.z * 0.25 * bk; }
+      if (bk > 0.01 && !(kicking && (kickSide > 0) === (i === 1))) { h += 0.5 * bk; x += f.x * 0.3 * bk; z += f.z * 0.3 * bk; }
       // в прыжке свободная нога поджимается, а не висит
-      if (air && !(kicking && (kickSide > 0) === (i === 1))) h += 0.16 * Math.min(1, s.py / 0.35);
+      if (air && !(kicking && (kickSide > 0) === (i === 1))) {
+        const tuck = Math.min(1, s.py / 0.3);
+        h += (i ? 0.1 : 0.04) * tuck; // одно колено чуть выше другого
+        x += f.x * (i ? 0.05 : -0.1) * tuck; z += f.z * (i ? 0.05 : -0.1) * tuck;
+      }
       return { x, z, h, yaw, planted: ft.planted && !lifted && !stopping, u: ft.u || 0, top: !!ft.top };
     });
     const sup = feetT.map((ft) => (ft.planted ? 1 : 0));

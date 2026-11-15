@@ -131,7 +131,7 @@ export class Room {
 
   _startMatch() {
     const w = this.world;
-    w.seed = randomBytes(2).readUInt16LE(0) || 1;
+    w.seed = this.fixedSeed || randomBytes(2).readUInt16LE(0) || 1; // fixedSeed — только для тестов: кто вводит мяч, зависит от seed
     w.reset('duel');
     for (const s of this.slots) { s.rematch = false; s.queue.length = 0; s.last = [0, 0, 1]; s.starve = 0; s.seq = s.recv; }
     this.events.length = 0;
