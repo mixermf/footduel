@@ -287,7 +287,7 @@ function handleEvents(events, me = 0, accept = null) {
       case 'receive':
         sfx.play(e.quality >= 1 ? 'receive' : 'receive_bad');
         if (!mine) break;
-        hud.showToast(e.reach ? 'Дотянулся' : e.quality >= 1 ? 'Точный приём' : e.guard ? 'Приём в стойке' : e.auto === 'stop' ? 'Остановил' : e.auto === 'cushion' ? 'Принял на щёчку' : 'Неполный приём', { ms: 600 });
+        hud.showToast(e.auto === 'deflect' ? (e.zone === 'head' ? 'Сыграл головой' : e.zone === 'chest' ? 'Принял на грудь' : 'Принял на бедро') : e.reach ? 'Дотянулся' : e.quality >= 1 ? 'Точный приём' : e.guard ? 'Приём в стойке' : e.auto === 'stop' ? 'Остановил' : e.auto === 'cushion' ? 'Принял на щёчку' : 'Неполный приём', { ms: 600 });
         if (game.settings.vibration) input.rumble(0.25, 60);
         break;
       case 'header': sfx.play('body', 0.6); if (mine) hud.showToast('Игра головой', { ms: 500 }); break;

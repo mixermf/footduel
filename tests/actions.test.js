@@ -409,3 +409,39 @@ test('vertical aim: holding towards the goal lifts the shot, away from the goal 
   }
   assert.ok(aim > 0.5, 'right-side player holding towards his target goal aims high: ' + aim);
 });
+
+test('ball at chest or head height: one touch with the body, the ball comes off in front (or to the side if directed) and drops to the feet', () => {
+  const feed = (kind, mode) => {
+    const [dx, y0, sp, hT] = { chest: [6, 0.8, 11, 1.3], head: [6, 1.0, 10, 1.75], drop: [0.05, 3.2, 0, 0], hard: [7, 0.9, 17, 1.3] }[kind];
+    const w = make('motor'), p = w.player, b = w.ball, P = w.P;
+    const hold = mode === 'guard' || mode === 'side' ? { guardHeld: true, superHeld: true } : {};
+    for (let i = 0; i < 40; i++) w.step(inp(hold));
+    b.x = p.x + dx; b.z = p.z; b.y = y0; b.vz = 0;
+    if (sp > 0) { const t = dx / sp; b.vx = -sp * 1.05; b.vy = (hT - y0 + 4.905 * t * t) / t; } else { b.vx = 0; b.vy = 0; }
+    const r = { body: 0, onTop: 0, inside: 0, first: -1, down: null, z0: p.z, landZ: null, landX: null, apexAfter: 0 };
+    for (let i = 0; i < 360; i++) {
+      const near = Math.hypot(b.x - p.x, b.z - p.z) < 1.5;
+      w.step(inp({ ...hold, mz: mode === 'side' && near && r.down === null ? -1 : 0 }));
+      for (const e of w.events) if ((e.type === 'receive' && e.zone !== 'foot') || e.type === 'body') { r.body++; if (r.first < 0) r.first = i; }
+      if (r.first >= 0) {
+        const d = Math.hypot(b.x - p.x, b.z - p.z);
+        if (d < P.player.radius - 0.02 && b.y > 0.3 && b.y < P.player.height) r.inside++;
+        if (b.y >= P.player.height - 0.05 && d < 0.2 && Math.hypot(b.vx, b.vz) < 0.6) r.onTop++;
+        if (r.down === null && b.y < 0.4) { r.down = (i - r.first) / 120; r.landZ = b.z - r.z0; r.landX = b.x - p.x; }
+      }
+    }
+    return r;
+  };
+  for (const kind of ['chest', 'head', 'drop', 'hard']) for (const mode of ['none', 'guard']) {
+    const r = feed(kind, mode), tag = `${kind}/${mode}: `;
+    assert.equal(r.body, 1, tag + 'one touch with the body, not a series');
+    assert.equal(r.inside, 0, tag + 'the ball never sits inside the body');
+    assert.ok(r.onTop < 6, tag + 'the ball does not rest on the head: ' + r.onTop);
+    assert.ok(r.down !== null && r.down < 1.0, tag + 'it is down at the feet within a second: ' + r.down);
+    assert.ok(r.landX > 0.3 && r.landX < 3.2, tag + 'and in front of the player: ' + r.landX.toFixed(2));
+  }
+  const soft = feed('hard', 'guard'), rough = feed('hard', 'none');
+  assert.ok(rough.landX > soft.landX + 0.5, `without the stance the bounce is rougher: ${rough.landX.toFixed(2)} vs ${soft.landX.toFixed(2)}`);
+  const side = feed('chest', 'side'), fwd = feed('chest', 'guard');
+  assert.ok(side.landZ < -0.35 && Math.abs(fwd.landZ) < 0.15, `held direction sends the ball that way: ${side.landZ.toFixed(2)} vs ${fwd.landZ.toFixed(2)}`);
+});

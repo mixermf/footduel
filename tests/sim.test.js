@@ -187,8 +187,11 @@ test('центр: тело не выходит за линию, мяч пере�
 
 test('приём: точное нажатие гасит мяч, без нажатия — отскок от тела', () => {
   const passive = harness('chest'); passive.run(1.6);
-  assert.ok(passive.log.some((e) => e.type === 'body' && e.zone === 'chest'));
-  assert.equal(passive.count('receive'), 0);
+  // without a press the player facing the ball still plays it off the chest - once, roughly, further away
+  const auto = passive.log.filter((e) => e.type === 'receive');
+  assert.ok(auto.length >= 1 && auto[0].zone === 'chest' && auto[0].auto === 'deflect' && auto[0].quality < 0.5);
+  assert.equal(passive.count('body'), 0);
+  assert.equal(auto.filter((e) => e.zone !== 'foot').length, 1, 'one touch with the body, not a series');
   const act = harness('chest'); let pressed = false;
   act.run(1.6, () => {
     const b = act.w.ball;
@@ -196,9 +199,9 @@ test('приём: точное нажатие гасит мяч, без нажа
   });
   const r = act.log.find((e) => e.type === 'receive');
   assert.ok(r && r.zone === 'chest' && r.quality === 1);
-  assert.ok(dist(act.w) < 1.2 && dist(passive.w) > 2, 'приём ' + dist(act.w) + ', отскок ' + dist(passive.w));
+  assert.ok(dist(act.w) < 1.2, 'приём ' + dist(act.w));
   const early = harness('chest'); early.inp.receivePressed = true; early.run(1.6);
-  assert.equal(early.count('receive'), 0, 'раннее нажатие не держит окно вечно');
+  assert.ok(!early.log.some((e) => e.type === 'receive' && e.quality >= 0.5), 'раннее нажатие не держит окно вечно');
 });
 
 test('детерминизм: повтор журнала ввода даёт тот же результат', () => {
@@ -497,8 +500,9 @@ test('приём в стойке: сильный удар гасится тел�
     }
   }
   const n = shoot(false, 0.7, 20);
-  assert.ok(n.hit && !n.rec, 'без стойки — обычный отскок от тела');
-  assert.ok(n.maxAway > 2.5, 'без стойки мяч отлетает: ' + n.maxAway.toFixed(2));
+  const gSame = shoot(true, 0.7, 20);
+  assert.ok(n.hit && n.rec && !n.rec.guard, 'без стойки — грубая подработка корпусом');
+  assert.ok(n.maxAway > gSame.maxAway + 0.6, `без стойки мяч отлетает дальше: ${n.maxAway.toFixed(2)} против ${gSame.maxAway.toFixed(2)}`);
   // мяч идёт в метре сбоку: стоя не достать, рывком — достать
   const miss = shoot(true, 0.11, 16);
   const still = (() => { const w = shoot(true, 0.11, 16, 9999); return w; })();

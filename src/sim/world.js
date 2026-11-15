@@ -36,7 +36,7 @@ function createPlayer(side) {
     lastTouchTick: -1000, lastKickTick: -1000,
     gesture: null, mode: 'run', yawVel: 0, dragSign: 0, lastTouchKind: null,
     guard: false, lunge: null, lungeCd: 0, recvTick: -1000, juggle: null,
-    slide: null, slideCd: 0, reach: null, reachCd: 0, superCharge: 0, fall: null,
+    slide: null, slideCd: 0, reach: null, reachCd: 0, superCharge: 0, fall: null, inX: 0, inZ: 0,
   };
 }
 
@@ -333,6 +333,7 @@ export class World {
     if (p.gesture) { p.gesture.t += dt; if (p.gesture.t > 0.35) p.gesture = null; }
     p.lungeCd = Math.max(0, p.lungeCd - dt);
     p.slideCd = Math.max(0, p.slideCd - dt);
+    p.inX = input.mx; p.inZ = input.mz; // направление команды: по нему корпус отбивает мяч при приёме
     p.reachCd = Math.max(0, p.reachCd - dt);
     if (!live) {
       p.kickBuf = p.jumpBuf = 0; p.guard = false; p.mode = input.sprintHeld ? 'sprint' : 'run';
@@ -855,7 +856,7 @@ export class World {
       const away = clamp(-(ix * (b.x - p.x) + iz * (b.z - p.z)) / bd, 0, 1); // 1 — движение точно от мяча
       const gs = G.speed + (G.backSpeed - G.speed) * clamp((away - 0.3) / 0.5, 0, 1);
       dvx = ix * gs * mag; dvz = iz * gs * mag;
-      if (mag <= 0.05 && (this.tick - p.recvTick) * dt < 1.2) {
+      if (mag <= 0.05 && (this.tick - p.recvTick) * dt < 1.2 && b.y < 0.5) { // only once the ball is down: walking under a dropping ball would knock it up again
         // сразу после приёма, если игрок ничего не жмёт, он сам делает шаг за опускающимся мячом — к точке следующего касания
         const ex = b.x + b.vx * 0.25 - Math.cos(p.yaw) * 0.45 - p.x, ez = b.z + b.vz * 0.25 - Math.sin(p.yaw) * 0.45 - p.z, el = Math.hypot(ex, ez);
         if (el > 0.08) { const sp = Math.min(G.speed, el * 6); dvx = (ex / el) * sp; dvz = (ez / el) * sp; }
@@ -1712,7 +1713,9 @@ export class World {
     const rvx = b.vx - p.vx, rvy = b.vy - p.vy, rvz = b.vz - p.vz;
     const vn = -(rvx * nx + rvy * ny + rvz * nz);
     const relH = b.y - p.y;
-    if (relH < 0.4 && vn < 2.5) return; // медленный мяч у ног — область стоп, не корпуса
+    if (relH < 0.4 && vn < 2.5) return;
+    // the ball this player has just played off his body is coming down in front of him: he does not take it on the body again
+    if (relH >= 0.4 && vn < 4 && (this.tick - p.recvTick) * this.dt < 0.8) return; // медленный мяч у ног — область стоп, не корпуса
     if (vn <= 0) return;
     // разрешаем пересечение без взрывного импульса
     const pen = R + r - d;
@@ -1733,14 +1736,13 @@ export class World {
       const carry = p.lunge ? 0.3 : 1; // в рывке мяч не уносится вместе с игроком
       const pvx = p.vx * carry, pvz = p.vz * carry;
       if (zone === 'foot') { b.vx = pvx * 0.6 + nx * (0.3 + leak); b.vz = pvz * 0.6 + nz * (0.3 + leak); b.vy = 0; }
-      else if (zone === 'thigh') { b.vx = pvx + fx * (0.5 + leak); b.vz = pvz + fz * (0.5 + leak); b.vy = guarding ? 1.1 : 1.6; }
-      else if (zone === 'chest') { b.vx = pvx + fx * (0.7 + leak); b.vz = pvz + fz * (0.7 + leak); b.vy = guarding ? 0.7 : 1.2; }
-      else { b.vx = pvx + fx * (1.0 + leak); b.vz = pvz + fz * (1.0 + leak); b.vy = guarding ? 1.6 : 2.2; }
+      else this._deflect(p, b, zone, q, vn);
       p.recvTick = this.tick;
       p.superCharge = Math.min(1, p.superCharge + P.kick.superReceive * q);
       b.wx = b.wy = b.wz = 0;
       p.receiveT = 0; p.gesture = { type: zone, t: 0 };
-      p.lastTouchTick = this.tick - Math.round(0.15 / this.dt); // короткая защита от повторного контакта
+      // мяч, отбитый корпусом, уже уходит от игрока: второго касания тем же местом не будет
+      p.lastTouchTick = zone === 'foot' ? this.tick - Math.round(0.15 / this.dt) : this.tick;
       this.stats.receives++;
       this.events.push({ type: 'receive', zone, quality: q, speed: vn, guard: guarding });
       return;
@@ -1767,6 +1769,15 @@ export class World {
       this.events.push({ type: 'header', speed: vn });
       return;
     }
+    if (zone !== 'foot' && p.y <= 0 && !p.kick && !p.fall && !p.slide && nx * fx + nz * fz > -0.25) {
+      // игрок повёрнут к мячу: без нажатий он тоже подрабатывает мяч той частью тела, в которую тот пришёл, — только грубее
+      this._deflect(p, b, zone, 0, vn);
+      p.gesture = { type: zone, t: 0 };
+      p.recvTick = this.tick; p.lastTouchTick = this.tick;
+      this.stats.receives++;
+      this.events.push({ type: 'receive', zone, quality: 0.3, speed: vn, auto: 'deflect' });
+      return;
+    }
     // пассивное попадание в тело: физический отскок, не считается приёмом
     const e = P.receive.passiveRestitution;
     b.vx = p.vx + (rvx + (1 + e) * vn * nx) * 0.9;
@@ -1774,6 +1785,26 @@ export class World {
     b.vz = p.vz + (rvz + (1 + e) * vn * nz) * 0.9;
     p.gesture = { type: 'hit', t: 0 };
     this.events.push({ type: 'body', zone, speed: vn });
+  }
+
+  // Подработка корпусом: одно касание — и мяч уходит перед игроком на небольшой дуге и опускается к ногам.
+  // Направление — по корпусу; если зажато направление, то туда, но не дальше чем вбок. q > 0 — мягкий приём (стойка, нажатие).
+  _deflect(p, b, zone, q, vn) {
+    const P = this.P, A = P.receive, g = P.ball.gravity, fx = Math.cos(p.yaw), fz = Math.sin(p.yaw);
+    let dx = fx, dz = fz;
+    const m = Math.hypot(p.inX, p.inZ);
+    if (m > 0.3) {
+      dx = p.inX / m; dz = p.inZ / m;
+      if (dx * fx + dz * fz < 0) { const s = -dx * fz + dz * fx >= 0 ? 1 : -1; dx = -fz * s; dz = fx * s; } // назад через себя корпусом не сыграть
+    }
+    const soft = q > 0;
+    const up = (zone === 'head' ? A.popHead : zone === 'chest' ? A.popChest : A.popThigh) * (soft ? 1 : 1.15);
+    const t = (up + Math.sqrt(up * up + 2 * g * Math.max(0, b.y - P.ball.radius))) / g; // время до покрытия
+    let dist = soft ? A.softNear + (A.softFar - A.softNear) * (1 - q) + Math.min(0.4, vn * 0.02) : clamp(A.roughBase + A.roughGain * vn, A.roughBase, A.roughMax);
+    if (zone === 'head') dist = Math.max(dist, A.headSpeed * t); // с головы мяч должен уйти вперёд раньше, чем опустится до плеч
+    const carry = p.lunge ? 0.3 : 0.6; // мяч отчасти идёт вместе с игроком
+    b.vx = dx * dist / t + p.vx * carry; b.vz = dz * dist / t + p.vz * carry; b.vy = up;
+    b.wx = b.wy = b.wz = 0;
   }
 
   _possession(p) {
