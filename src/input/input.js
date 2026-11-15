@@ -2,10 +2,10 @@
 // Разделены удержание и события нажатия; автоповтор клавиш не создаёт событий.
 
 export const DEFAULT_KEYS = {
-  // стрелки — бег и направление мяча; D — удар, W — ускорение, A — навес (без мяча подкат), Q — суперудар, S — без мяча дотянуться,
-  // пробел — чеканка (без мяча прыжок), C — защитная стойка
+  // стрелки — бег и направление мяча; D — удар, W — ускорение, A — навес (без мяча подкат), Q — суперудар,
+  // S — без мяча защитная стойка и приём: в стойке ближайшая нога сама тянется к мячу; пробел — чеканка (без мяча прыжок)
   up: ['ArrowUp'], down: ['ArrowDown'], left: ['ArrowLeft'], right: ['ArrowRight'],
-  kick: ['KeyD'], sprint: ['KeyW'], lob: ['KeyA'], super: ['KeyQ'], reach: ['KeyS'], jump: ['Space'], guard: ['KeyC'],
+  kick: ['KeyD'], sprint: ['KeyW'], lob: ['KeyA'], super: ['KeyQ'], jump: ['Space'], guard: ['KeyS'],
   receive: ['KeyE'], faceGoal: ['KeyX'],
   pause: ['Escape'], confirm: ['Enter'], ballReturn: ['KeyR'], serve: ['KeyF'], wall: ['KeyG'],
 };
@@ -16,7 +16,7 @@ export const DEFAULT_PAD = {
   pause: 9, confirm: 0, back: 1, up: 12, down: 13, left: 14, right: 15,
 };
 
-const STORAGE_KEY = 'soccer-duel-desktop.bindings.v4'; // v4: суперудар на Q, дотянуться осталось на S, разворот к воротам на X
+const STORAGE_KEY = 'soccer-duel-desktop.bindings.v5'; // v5: S — стойка и приём вместе, C свободна
 
 export function findConflicts(keys) {
   const seen = new Map(), conflicts = [];
@@ -166,7 +166,7 @@ export class Input {
     out.jumpPressed = edges && p.has('jump');
     out.receivePressed = edges && p.has('receive');
     out.feintPressed = false;
-    out.superPressed = edges && p.has('super'); out.superHeld = this._held('reach'); // удержание — «дотянуться до мяча»
+    out.superPressed = edges && p.has('super'); out.superHeld = this._held('guard') || !!this._padHeld.reach; // стойка на клавиатуре включает и приём ногой; на геймпаде приём — отдельной кнопкой
     out.lobPressed = edges && p.has('lob'); out.lobHeld = this._held('lob');
     return out;
   }

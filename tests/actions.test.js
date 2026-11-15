@@ -334,3 +334,24 @@ test('high-ball kicks need the player\'s own jump: kick alone waits for the ball
   assert.ok(old.kick && old.kick.fly, 'jumpKicks off: the flying side volley on the kick button alone');
   assert.ok(run({ legacy: true, back: true, h: 2.6 }).kick?.bike, 'jumpKicks off: the bicycle kick on the kick button alone');
 });
+
+test('guard stance and foot receive together (one key): the stance holds, a ball going past is reached, a ball at the body is taken', () => {
+  const run = (dx, dz, vx, vy, y) => {
+    const w = make('motor'), p = w.player, b = w.ball;
+    for (let i = 0; i < 30; i++) w.step(inp({ guardHeld: true, superHeld: true }));
+    assert.ok(p.guard, 'stance is on');
+    b.x = p.x + dx; b.z = p.z + dz; b.y = y; b.vx = vx; b.vy = vy; b.vz = 0;
+    let rec = null, stance = 0;
+    for (let i = 0; i < 240; i++) {
+      w.step(inp({ guardHeld: true, superHeld: true }));
+      if (p.guard) stance++;
+      for (const e of w.events) if (e.type === 'receive' && !rec) rec = e;
+    }
+    return { rec, stance, d: Math.hypot(b.x - p.x, b.z - p.z) };
+  };
+  const wide = run(5, 0.8, -11, 0, 0.11), body = run(6, 0, -14, 0, 0.11), chest = run(6, 0.1, -10, 2.5, 0.9);
+  assert.ok(wide.rec && wide.rec.reach && wide.d < 1.2, 'a ball 0.8 m to the side is reached with the foot: ' + wide.d.toFixed(2));
+  assert.ok(wide.stance > 20, 'the stance was held until the ball was won');
+  assert.ok(body.rec && body.d < 1.2, 'a ball at the body is taken');
+  assert.ok(chest.rec && chest.d < 1.2, 'a ball at the chest is taken');
+});
