@@ -1269,8 +1269,8 @@ export class World {
     k.t += dt;
     const attack = -p.side; // +1: атакуем вправо
     if (k.phase === 'charge' || k.phase === 'ready' || k.phase === 'windup' || k.phase === 'swing') {
-      // прицел в экранных осях: вверх/вниз — сторона ворот, к воротам — ниже, от ворот — выше
-      const tLat = input.mz, tHigh = -input.mx * attack;
+      // прицел в экранных осях: вверх/вниз — сторона ворот, к воротам — выше, от ворот — ниже (как в привычных футбольных играх)
+      const tLat = input.mz, tHigh = input.mx * attack;
       if (input.digital) {
         k.aimLat = clamp(k.aimLat + tLat * K.aimRateDigital * dt, -1, 1);
         k.aimHigh = clamp(k.aimHigh + tHigh * K.aimRateDigital * dt, -1, 1);

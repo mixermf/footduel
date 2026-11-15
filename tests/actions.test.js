@@ -385,3 +385,27 @@ test('juggling: A tosses the ball up and a little forward for yourself; kick + j
   const lob = run('lob');
   assert.ok(lob.kick && lob.kick.kind === 'lob' && !lob.slid, 'A again after the toss: a lob on the volley, not a slide');
 });
+
+test('vertical aim: holding towards the goal lifts the shot, away from the goal keeps it low - for both sides', () => {
+  const shot = (mx) => {
+    const w = make('free'), b = w.ball;
+    let vy = null, aim = null;
+    for (let i = 0; i < 240 && vy === null; i++) {
+      w.step(inp({ kickPressed: i === 0, kickHeld: i < 40, mx }));
+      for (const e of w.events) if (e.type === 'kick') { vy = b.vy; aim = e.aimHigh; }
+    }
+    return { vy, aim };
+  };
+  const to = shot(1), away = shot(-1), flat = shot(0); // player 0 attacks towards +x
+  assert.ok(to.aim > 0.5 && away.aim < -0.5, `aim: towards ${to.aim.toFixed(2)}, away ${away.aim.toFixed(2)}`);
+  assert.ok(to.vy > flat.vy + 1 && flat.vy > away.vy, `ball rise: towards ${to.vy.toFixed(1)}, neutral ${flat.vy.toFixed(1)}, away ${away.vy.toFixed(1)}`);
+  // the player on the right attacks towards -x: for him 'towards the goal' is the other way on the screen
+  const w = new World(createProfile(), { seed: 3, duel: true });
+  w._kickoff(1, true);
+  let aim = null;
+  for (let i = 0; i < 300 && aim === null; i++) {
+    w.step(inp(), inp({ kickPressed: i === 0, kickHeld: i < 40, mx: -1 }));
+    for (const e of w.events) if (e.type === 'kick') aim = e.aimHigh;
+  }
+  assert.ok(aim > 0.5, 'right-side player holding towards his target goal aims high: ' + aim);
+});
