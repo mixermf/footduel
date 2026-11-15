@@ -429,7 +429,7 @@ function runFrame(now) {
   const err = sess ? sess.err : null;
   lerpPlayer(view, prev, cur, a, err ? err.p[0] : ZERO);
   if (online) lerpPlayer(view.p2, prev.p2, cur.p2, a, err ? err.p[1] : ZERO);
-  if (sess && sess.hasState && sess.me >= 0) sess.remoteView(sess.me === 0 ? view.p2 : view, running ? dtReal : 0);
+  if (sess && sess.hasState && sess.me >= 0) { const rv = sess.me === 0 ? view.p2 : view; sess.remoteView(rv, running ? dtReal : 0, rv); } // rv уже содержит предсказанное положение соперника
   const eb = err ? err.b : ZERO;
   view.bx = prev.bx + (cur.bx - prev.bx) * a + eb.x; view.bz = prev.bz + (cur.bz - prev.bz) * a + eb.z;
   view.by = Math.max(world.P.ball.radius, prev.by + (cur.by - prev.by) * a + eb.y);

@@ -123,9 +123,13 @@ export class NetSession {
     if (Math.hypot(o.x, o.y, o.z) > limit) o.x = o.y = o.z = 0; // большое расхождение (ввод мяча, гол) — без «резинки»
   }
 
-  // Положение соперника для рендера: интерполяция между подтверждёнными состояниями сервера.
-  // out — снимок игрока (как World._snapPlayer); dt — время кадра, с. Возвращает false, если состояний ещё нет.
-  remoteView(out, dt) {
+  // Положение соперника для рендера. Вдали от мяча — интерполяция между подтверждёнными состояниями сервера (с отставанием,
+  // зато без рывков: угадать чужой ввод на пинг вперёд нельзя). Рядом с мячом так нельзя: мяч показывается по предсказанию,
+  // «сейчас», и отстающий игрок бил бы по воздуху, а мяч на ведении катился бы в полуметре от его ног. Поэтому, когда соперник
+  // работает с мячом, он плавно переводится на предсказанное положение pred — в то же время, что и мяч.
+  // out — снимок игрока (как World._snapPlayer); pred — предсказанный снимок того же игрока (может совпадать с out);
+  // dt — время кадра, с. Возвращает false, если состояний ещё нет.
+  remoteView(out, dt, pred = null) {
     const rb = this.remoteBuf, n = rb.length;
     if (!n) return false;
     const target = rb[n - 1].tick - REMOTE_DELAY;
@@ -138,18 +142,41 @@ export class NetSession {
     while (i > 0 && rb[i - 1].tick >= rt) i--;
     const b = rb[i], a = rb[Math.max(0, i - 1)];
     const k = b.tick > a.tick ? Math.max(0, Math.min(1, (rt - a.tick) / (b.tick - a.tick))) : 1;
+    // доля предсказанного положения: 1 — соперник у мяча или занят действием с ним
+    const w = pred ? this._remoteWeight(dt) : 0;
     const A = a.v, B = b.v, L = (x, y) => x + (y - x) * k;
-    out.px = L(A.px, B.px); out.pz = L(A.pz, B.pz); out.py = L(A.py, B.py); out.vx = L(A.vx, B.vx); out.vz = L(A.vz, B.vz);
-    out.yaw = angLerp(A.yaw, B.yaw, k);
+    const M = (d, p) => (w > 0 ? d + (p - d) * w : d);
+    const yawD = angLerp(A.yaw, B.yaw, k);
+    const P = w > 0 ? pred : null;
+    const px = M(L(A.px, B.px), P ? P.px : 0), pz = M(L(A.pz, B.pz), P ? P.pz : 0), py = M(L(A.py, B.py), P ? P.py : 0);
+    const vx = M(L(A.vx, B.vx), P ? P.vx : 0), vz = M(L(A.vz, B.vz), P ? P.vz : 0);
+    const yaw = P ? angLerp(yawD, P.yaw, w) : yawD;
+    let dgp = B.gp - A.gp; if (dgp > 0.5) dgp -= 1; else if (dgp < -0.5) dgp += 1;
+    let gp = (((A.gp + dgp * k) % 1) + 1) % 1;
+    if (P) { let d2 = P.gp - gp; if (d2 > 0.5) d2 -= 1; else if (d2 < -0.5) d2 += 1; gp = (((gp + d2 * w) % 1) + 1) % 1; }
+    const near = w > 0.5, gait = near ? P.gait : B.gait;
     out.feet = out.feet || [{}, {}];
     for (let j = 0; j < 2; j++) {
-      const fa = A.feet[j], fb = B.feet[j], f = out.feet[j];
-      f.x = L(fa.x, fb.x); f.z = L(fa.z, fb.z); f.h = L(fa.h, fb.h); f.yaw = angLerp(fa.yaw, fb.yaw, k);
-      f.planted = fb.planted; f.u = fb.u; f.top = fb.top;
+      const fa = A.feet[j], fb = B.feet[j], fp = P ? P.feet[j] : null, f = out.feet[j];
+      const x = M(L(fa.x, fb.x), fp ? fp.x : 0), z = M(L(fa.z, fb.z), fp ? fp.z : 0), h = M(L(fa.h, fb.h), fp ? fp.h : 0);
+      const fy = angLerp(fa.yaw, fb.yaw, k), yw = fp ? angLerp(fy, fp.yaw, w) : fy;
+      const src = near ? fp : fb, planted = src.planted, u = src.u, top = src.top;
+      f.x = x; f.z = z; f.h = h; f.yaw = yw; f.planted = planted; f.u = u; f.top = top;
     }
-    let dgp = B.gp - A.gp; if (dgp > 0.5) dgp -= 1; else if (dgp < -0.5) dgp += 1;
-    out.gp = (((A.gp + dgp * k) % 1) + 1) % 1; out.gait = B.gait;
+    out.px = px; out.pz = pz; out.py = py; out.vx = vx; out.vz = vz; out.yaw = yaw; out.gp = gp; out.gait = gait;
     return true;
+  }
+
+  // Соперник работает с мячом: владеет, бьёт, чеканит, идёт в подкат, тянется, летит — или мяч просто рядом с ним
+  _remoteWeight(dt) {
+    const w = this.world, q = w.players[1 - this.me], b = w.ball;
+    const busy = q && (q.possession || q.kick || q.juggle || q.slide || q.reach || q.fall || q.lunge
+      || Math.hypot(b.x - q.x, b.z - q.z) < 2.6);
+    const cur = this.remoteW || 0, tgt = busy ? 1 : 0;
+    // к мячу — быстро (контакт должен совпасть), обратно — медленнее
+    this.remoteW = cur + (tgt - cur) * Math.min(1, dt * (busy ? 9 : 3.5));
+    if (Math.abs(this.remoteW - tgt) < 0.004) this.remoteW = tgt;
+    return this.remoteW;
   }
 
   clearError() { for (const o of [this.err.p[0], this.err.p[1], this.err.b]) o.x = o.y = o.z = 0; }

@@ -307,3 +307,58 @@ test('соперник показывается по подтверждённы�
   const srv = r.room.world.players[1];
   assert.ok(Math.abs(view.pz - srv.z) < 1.6, 'показанное положение — недавнее положение сервера');
 });
+
+test('remote player with the ball is shown in the same time as the ball: no gap between his feet and the ball', (t) => {
+  const measure = (usePred) => {
+    const r = rig({ delay: 8, jitter: 2 }); // about 130 ms ping
+    startMatch(r);
+    r.room.world._kickoff(1, true);
+    r.pump(60);
+    const c = r.clients[0], view = {}, pred = {};
+    let sumShown = 0, sumSrv = 0, maxDiff = 0, n = 0, maxStep = 0, last = null;
+    // player 1 dribbles with the ball up and down his half
+    const script = (t) => [inp(), inp({ mz: Math.floor(t / 150) % 2 ? 1 : -1, mx: 0 })];
+    for (let i = 0; i < 900; i++) {
+      r.pump(1, script);
+      if (i % 2) continue;
+      c.world._snapPlayer(c.world.players[1], pred);
+      if (!c.net.remoteView(view, 1 / 60, usePred ? pred : null)) continue;
+      const srv = r.room.world, q = srv.players[1];
+      if (i > 240 && q.possession && Math.hypot(q.vx, q.vz) > 2) {
+        const shown = Math.hypot(c.world.ball.x - view.px, c.world.ball.z - view.pz), real = Math.hypot(srv.ball.x - q.x, srv.ball.z - q.z);
+        sumShown += shown; sumSrv += real; maxDiff = Math.max(maxDiff, Math.abs(shown - real)); n++;
+      }
+      if (last !== null && i > 240) maxStep = Math.max(maxStep, Math.hypot(view.px - last[0], view.pz - last[1]));
+      last = [view.px, view.pz];
+    }
+    return { shown: sumShown / n, real: sumSrv / n, maxDiff, n, maxStep };
+  };
+  const old = measure(false), fixed = measure(true);
+  assert.ok(old.n > 100 && fixed.n > 100);
+  assert.ok(old.shown - old.real > 0.25, 'delayed view alone leaves the ball well ahead of the feet: ' + (old.shown - old.real).toFixed(2));
+  assert.ok(Math.abs(fixed.shown - fixed.real) < 0.12, `the ball stays at his feet: shown ${fixed.shown.toFixed(2)} m, on the server ${fixed.real.toFixed(2)} m`);
+  assert.ok(fixed.maxStep < 0.16, 'and he still moves without jumps: ' + fixed.maxStep.toFixed(3) + ' m per frame');
+  t.diagnostic(`dribble gap ball-player: server ${old.real.toFixed(2)} m, delayed view ${old.shown.toFixed(2)} m, fixed ${fixed.shown.toFixed(2)} m; max step ${old.maxStep.toFixed(3)} -> ${fixed.maxStep.toFixed(3)} m`);
+  // the kick: at the moment the observer sees the ball struck, the shown kicking foot must be at the ball
+  const kickGap = (usePred) => {
+    const r = rig({ delay: 8, jitter: 2 });
+    startMatch(r);
+    r.room.world._kickoff(1, true);
+    r.pump(60);
+    const c = r.clients[0], view = {}, pred = {};
+    let gap = null, at = 0;
+    for (let i = 0; i < 600 && gap === null; i++) {
+      at++;
+      r.pump(1, () => [inp(), inp({ kickPressed: at === 40, kickHeld: at >= 40 && at < 90 })]);
+      c.world._snapPlayer(c.world.players[1], pred);
+      if (!c.net.remoteView(view, 1 / 120, usePred ? pred : null)) continue;
+      const q = c.world.players[1], k = q.kick;
+      if (k && k.phase === 'curl' && k.t < 0.02) { const f = view.feet[k.footSide > 0 ? 1 : 0], q0 = c.world.ball; gap = Math.hypot(f.x - (q0.x - q0.vx * k.t), f.z - (q0.z - q0.vz * k.t)); }
+    }
+    return gap;
+  };
+  const g0 = kickGap(false), g1 = kickGap(true);
+  t.diagnostic(`kick: shown foot to ball at contact: delayed view ${g0.toFixed(2)} m, fixed ${g1.toFixed(2)} m`);
+  assert.ok(g1 < 0.35, 'the shown kicking foot is at the ball when it is struck: ' + g1.toFixed(2));
+  assert.ok(g1 < g0, 'and closer than with the delayed view');
+});
