@@ -359,7 +359,9 @@ export class World {
     const hasBall = this._hasBall(p);
     if (p.kickBuf > 0 && !p.kick && !p.slide) { p.kickBuf = 0; this._startKick(p, input); }
     if (input.lobPressed && !p.kick && !p.slide) {
-      if (hasBall) this._startKick(p, input, 'lob'); else this._startSlide(p, input);
+      // в чеканке та же кнопка — прокидывание себе на ход: мяч вверх и чуть вперёд, под удар в прыжке
+      if (p.juggle) { if (!p.juggle.toss) { p.juggle.toss = true; this.events.push({ type: 'toss_ready' }); } }
+      else if (hasBall) this._startKick(p, input, 'lob'); else this._startSlide(p, input);
     }
     if (input.superPressed && !p.kick && !p.slide && hasBall) {
       if (p.superCharge >= 1) this._startKick(p, input, 'super');
@@ -418,7 +420,7 @@ export class World {
     if (p.possession || p.juggle) return true;
     const b = this.ball, since = (this.tick - p.lastTouchTick) * this.dt;
     const dist = this._ballDist(p);
-    if ((p.lastTouchKind === 'flick' || p.lastTouchKind === 'juggle') && since < 1.4 && b.y > 0.25 && dist < this.P.juggle.maxDist) return true;
+    if ((p.lastTouchKind === 'flick' || p.lastTouchKind === 'juggle' || p.lastTouchKind === 'toss') && since < 1.6 && b.y > 0.25 && dist < this.P.juggle.maxDist) return true;
     // the ball is in the air right by the player (after a receive, a bounce, a lofted pass): it is his ball as well -
     // close now, or coming within reach in under half a second
     // a low ball further away is still a tackle target (sliding or in the air), and so is any ball once the player has jumped
@@ -706,13 +708,16 @@ export class World {
     let vx = (p.x + fx * J.front + rx * next * J.side + p.vx * tf * 0.9 - b.x) / tf;
     let vz = (p.z + fz * J.front + rz * next * J.side + p.vz * tf * 0.9 - b.z) / tf;
     const hv = Math.hypot(vx, vz); if (hv > 2.6) { vx *= 2.6 / hv; vz *= 2.6 / hv; }
-    b.vx = vx; b.vz = vz; b.vy = vy; b.wx = b.wy = b.wz = 0;
+    const toss = !!j.toss;
+    if (toss) { vx = fx * J.tossFwd + p.vx * 0.5; vz = fz * J.tossFwd + p.vz * 0.5; }
+    b.vx = vx; b.vz = vz; b.vy = toss ? J.tossPop : vy; b.wx = b.wy = b.wz = 0;
     j.n++; j.high = false; j.swing = false; j.side = next;
-    p.lastTouchTick = this.tick; p.lastTouchKind = 'juggle';
+    p.lastTouchTick = this.tick; p.lastTouchKind = toss ? 'toss' : 'juggle';
     p.superCharge = Math.min(1, p.superCharge + P.kick.superJuggle);
     foot.ctl = null; this._lift(foot, 0.18, 0.02, false);
     this.stats.touches++;
-    this.events.push({ type: 'touch', kind: 'juggle', n: j.n, speed: vy });
+    this.events.push({ type: 'touch', kind: toss ? 'toss' : 'juggle', n: j.n, speed: toss ? J.tossPop : vy });
+    if (toss) this._endJuggle(p); // мяч ушёл высоко: дальше — удар в прыжке, навес с лёта или приём
   }
 
   _endJuggle(p) {

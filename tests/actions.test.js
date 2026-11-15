@@ -355,3 +355,33 @@ test('guard stance and foot receive together (one key): the stance holds, a ball
   assert.ok(body.rec && body.d < 1.2, 'a ball at the body is taken');
   assert.ok(chest.rec && chest.d < 1.2, 'a ball at the chest is taken');
 });
+
+test('juggling: A tosses the ball up and a little forward for yourself; kick + jump then strikes it in flight', () => {
+  const run = (after) => {
+    const w = make('free'), p = w.player, b = w.ball;
+    const r = { tossAt: -1, apex: 0, fwd: 0, kick: null, slid: false, juggleAfter: false, n: 0 };
+    let x0 = 0, landed = false;
+    for (let i = 0; i < 700; i++) {
+      const s = r.tossAt < 0 ? -99 : i - r.tossAt;
+      w.step(inp({ jumpPressed: i === 10 || (after === 'fly' && s === 40), lobPressed: i === 200 || (after === 'lob' && s === 60),
+        lobHeld: after === 'lob' && s >= 60 && s < 80, kickPressed: after === 'fly' && s === 30, kickHeld: after === 'fly' && s >= 30 && s < 120 }));
+      for (const e of w.events) {
+        if (e.type === 'touch' && e.kind === 'juggle' && r.tossAt < 0) r.n++;
+        if (e.type === 'touch' && e.kind === 'toss') { r.tossAt = i; x0 = b.x; }
+        if (e.type === 'kick' && !r.kick) r.kick = e;
+        if (r.tossAt >= 0 && e.type === 'bounce' && !landed) { landed = true; r.fwd = b.x - x0; }
+      }
+      if (r.tossAt >= 0) { r.apex = Math.max(r.apex, b.y); if (p.juggle) r.juggleAfter = true; if (p.slide) r.slid = true; }
+    }
+    return r;
+  };
+  const idle = run('none');
+  assert.ok(idle.n >= 2 && idle.tossAt > 200, 'the series runs, the toss comes with the next touch');
+  assert.ok(idle.apex > 2.0 && idle.apex < 2.8, 'the ball goes well above the head: ' + idle.apex.toFixed(2));
+  assert.ok(idle.fwd > 0.8 && idle.fwd < 2.6, 'and comes down a little ahead: ' + idle.fwd.toFixed(2));
+  assert.equal(idle.juggleAfter, false, 'the series ends with the toss');
+  const fly = run('fly');
+  assert.ok(fly.kick && fly.kick.fly && fly.kick.volley, 'kick held + jump after the toss: flying side volley');
+  const lob = run('lob');
+  assert.ok(lob.kick && lob.kick.kind === 'lob' && !lob.slid, 'A again after the toss: a lob on the volley, not a slide');
+});
