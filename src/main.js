@@ -147,7 +147,21 @@ function mainMenu() {
     { label: 'Игра по сети: создать комнату', act: () => openLobby('create') },
     { label: 'Игра по сети: войти по коду', act: () => openLobby('join') },
     ...settingsItems(),
+    { label: 'Выход из игры', act: quitGame },
   ], CONTROLS);
+}
+
+// Выход из игры: матч покидается, окно закрывается. Браузер не даёт закрыть вкладку, которую открыл сам пользователь, —
+// тогда остаётся экран завершения с возвратом в главное меню (в desktop-упаковке окно закроется).
+function quitGame() {
+  if (game.net) { game.net.leave(); game.net = null; }
+  lobby.close();
+  setMode('sandbox');
+  game.state = 'menu';
+  hud.openMenu('Игра завершена', 'Вкладку можно закрыть.', [
+    { label: 'Вернуться в главное меню', act: () => mainMenu() },
+  ]);
+  try { window.close(); } catch { /* закрытие запрещено браузером */ }
 }
 
 function openLobby(kind, code = '') {
@@ -178,8 +192,9 @@ function pause(reason) {
     game.net.session.neutral();
     hud.openMenu('Меню матча', reason || 'Матч продолжается. Esc — вернуться в игру.', [
       { label: 'Продолжить', act: resume },
-      { label: 'Выйти из матча', act: () => mainMenu() },
       ...settingsItems(),
+      { label: 'Выйти в главное меню', value: () => 'матч будет покинут', act: () => mainMenu() },
+      { label: 'Выход из игры', act: quitGame },
     ], CONTROLS);
     return;
   }
@@ -191,8 +206,9 @@ function pause(reason) {
     { label: 'Тренировочная подача', act: () => { resume(); nextServe(); } },
     { label: 'Щит вместо правых ворот', value: () => onoff(world.P.field.reboundWall), act: toggleWall, adjust: toggleWall },
     { label: 'Сбросить песочницу', act: () => { game.resetSandbox('free'); resume(); } },
-    { label: 'Главное меню и игра по сети', act: () => mainMenu() },
     ...settingsItems(),
+    { label: 'Выйти в главное меню', act: () => mainMenu() },
+    { label: 'Выход из игры', act: quitGame },
   ], CONTROLS);
 }
 
