@@ -243,10 +243,26 @@ const pending = { ret: false, serve: false, wall: false };
 function toggleWall() { pending.wall = true; }
 function nextServe() { pending.serve = true; }
 
+// шаги: звук в момент, когда стопа встала на покрытие; громче на бегу, не звучит в воздухе, в подкате и лёжа
+const stepState = [[true, true], [true, true]];
+function stepSound(v, q, idx) {
+  const st = stepState[idx];
+  for (let i = 0; i < 2; i++) {
+    const on = !!v.feet[i].planted;
+    if (on && !st[i] && q.y <= 0 && !q.slide && !q.fall) {
+      const sp = Math.hypot(q.vx, q.vz);
+      if (sp > 0.4) sfx.play('step', sp / 4.6, Math.max(-1, Math.min(1, q.x / (world.P.field.length / 2))) * 0.55);
+    }
+    st[i] = on;
+  }
+}
+
 // ---------- события симуляции → звук, HUD, эффекты ----------
 // me — номер своего игрока в сетевой игре (в песочнице 0); чужие события дают звук и вспышку, но не подсказки и вибрацию
 function handleEvents(events, me = 0, accept = null) {
   const b = world.ball;
+  const pan = Math.max(-1, Math.min(1, b.x / (world.P.field.length / 2))) * 0.55; // звук идёт оттуда, где мяч на экране
+  const panOf = (e) => { const q = world.players[e.pi || 0]; return q ? Math.max(-1, Math.min(1, q.x / (world.P.field.length / 2))) * 0.55 : pan; };
   for (const e of events) {
     if (accept && !accept(e)) continue;
     const mine = e.pi === undefined || e.pi === me;
@@ -258,21 +274,22 @@ function handleEvents(events, me = 0, accept = null) {
         hud.showToast(e.on ? 'Щит вместо ворот: мяч возвращается' : 'Ворота открыты', { ms: 800 });
         break;
       case 'touch':
-        sfx.play('touch'); scene.contactFlash(b.x, e.kind === 'juggle' || e.kind === 'toss' ? b.y : 0.02, b.z, 0);
+        sfx.play('touch', 0.5, pan); scene.contactFlash(b.x, e.kind === 'juggle' || e.kind === 'toss' ? b.y : 0.02, b.z, 0);
         if (e.kind === 'toss' && mine) hud.showToast('Прокинул себе: удар + прыжок', { ms: 900 });
         if (e.kind === 'juggle' && mine && e.n >= 3) hud.showToast('Чеканка ×' + e.n, { ms: 500 });
         break;
       case 'juggle_start': if (mine) hud.showToast('Чеканка: удар — с лёта, пробел — подбить выше', { ms: 1200 }); break;
-      case 'slide': sfx.play('body', 0.35); break;
+      case 'slide': sfx.play('slide', 0.5, panOf(e)); break;
+      case 'land': sfx.play('thud', 0.25, panOf(e)); break;
       case 'kick_armed': if (mine) hud.showToast('Удар в прыжке!', { ms: 500 }); break;
-      case 'fall': sfx.play('body', 0.7); scene.shake = Math.max(scene.shake, 0.04); break;
+      case 'fall': sfx.play('thud', 0.8, panOf(e)); scene.shake = Math.max(scene.shake, 0.04); break;
       case 'tackle':
-        sfx.play('kick', 0.5); scene.contactFlash(b.x, b.y, b.z, 0.5);
+        sfx.play('kick', 0.5, pan); scene.contactFlash(b.x, b.y, b.z, 0.5);
         if (mine) { hud.showToast(e.air ? 'Подкат в прыжке!' : 'Подкат!', { ms: 600 }); if (game.settings.vibration) input.rumble(0.4, 80); }
         break;
       case 'super_empty': if (mine) hud.showToast('Суперудар не готов: ' + Math.round(e.charge * 100) + '%', { ms: 600 }); break;
       case 'kick':
-        sfx.play('kick', Math.min(1, e.speed / 24)); scene.contactFlash(b.x, b.y, b.z, 0.6 + e.charge + (e.firstTime ? 0.5 : 0));
+        sfx.play('kick', Math.min(1, e.speed / 24), pan); scene.contactFlash(b.x, b.y, b.z, 0.6 + e.charge + (e.firstTime ? 0.5 : 0));
         scene.shake = 0.03 + 0.09 * Math.min(1, e.speed / 24) + (e.kind === 'super' ? 0.12 : 0);
         if (!mine) break;
         if (e.kind === 'super') hud.showToast('СУПЕРУДАР!', { big: true, ms: 900 });
@@ -285,17 +302,17 @@ function handleEvents(events, me = 0, accept = null) {
         if (game.settings.vibration) input.rumble(0.3 + 0.6 * e.charge, 90);
         break;
       case 'receive':
-        sfx.play(e.quality >= 1 ? 'receive' : 'receive_bad');
+        sfx.play(e.auto === 'deflect' ? 'body' : e.quality >= 1 ? 'receive' : 'receive_bad', 0.5, pan);
         if (!mine) break;
         hud.showToast(e.auto === 'deflect' ? (e.zone === 'head' ? 'Сыграл головой' : e.zone === 'chest' ? 'Принял на грудь' : 'Принял на бедро') : e.reach ? 'Дотянулся' : e.quality >= 1 ? 'Точный приём' : e.guard ? 'Приём в стойке' : e.auto === 'stop' ? 'Остановил' : e.auto === 'cushion' ? 'Принял на щёчку' : 'Неполный приём', { ms: 600 });
         if (game.settings.vibration) input.rumble(0.25, 60);
         break;
-      case 'header': sfx.play('body', 0.6); if (mine) hud.showToast('Игра головой', { ms: 500 }); break;
-      case 'body': sfx.play('body', e.speed / 15); break;
-      case 'wall': sfx.play(e.surface === 'board' ? 'wall' : 'net', e.speed / 18); break;
-      case 'net': sfx.play('net', e.speed / 18); scene.netHit(e.side, e.part, b.x, b.y, b.z, e.speed); break;
-      case 'post': sfx.play('post', e.speed / 20); scene.shake = Math.max(scene.shake, 0.03); break;
-      case 'bounce': sfx.play('bounce', e.speed / 10); break;
+      case 'header': sfx.play('header', 0.6, pan); if (mine) hud.showToast('Игра головой', { ms: 500 }); break;
+      case 'body': sfx.play('body', e.speed / 15, pan); break;
+      case 'wall': sfx.play(e.surface === 'board' ? 'wall' : 'fence', e.speed / 18, pan); break;
+      case 'net': sfx.play('net', e.speed / 18, pan); scene.netHit(e.side, e.part, b.x, b.y, b.z, e.speed); break;
+      case 'post': sfx.play('post', e.speed / 20, pan); scene.shake = Math.max(scene.shake, 0.03); break;
+      case 'bounce': sfx.play('bounce', e.speed / 10, pan); break;
       case 'goal': {
         const scored = e.by === undefined ? e.scored : e.by === me;
         sfx.play('goal'); hud.showToast(scored ? 'ГОЛ!' : 'Пропущен', { big: true, ms: 1100 });
@@ -303,9 +320,9 @@ function handleEvents(events, me = 0, accept = null) {
         if (game.settings.vibration) input.rumble(0.8, 200);
         break;
       }
-      case 'kickoff': hud.showToast(e.to === me ? 'Мяч у вас' : 'Мяч у соперника', { ms: 700 }); break;
+      case 'kickoff': sfx.play('whistle'); hud.showToast(e.to === me ? 'Мяч у вас' : 'Мяч у соперника', { ms: 700 }); break;
       case 'kick_cancel': if (mine) { sfx.play('cancel'); hud.showToast('Удар отменён: ' + e.reason, { ms: 800 }); } break;
-      case 'kick_miss': if (mine) { sfx.play('cancel'); hud.showToast('Мимо мяча', { ms: 600 }); } break;
+      case 'kick_miss': if (mine) { sfx.play('miss'); hud.showToast('Мимо мяча', { ms: 600 }); } break;
       case 'kick_empty': if (mine) hud.showToast('Мяч далеко', { ms: 500 }); break;
       case 'control_lost': if (mine) hud.showToast('Потеря контроля', { ms: 600 }); break;
       default: break;
@@ -443,6 +460,7 @@ function runFrame(now) {
   const auxOf = (q) => ({ ball, kick: q.kick, gesture: q.gesture, guard: q.guard || !!q.lunge, withBall: !!q.possession, juggle: q.juggle, slide: q.slide, reach: q.reach, fall: q.fall, jumpPrep: q.jumpPrep, vy: q.vy });
   rig.update(view, auxOf(P0), dtVis);
   if (online && P1) rig2.update(view.p2, auxOf(P1), dtVis);
+  if (running) { stepSound(view, P0, 0); if (online && P1) stepSound(view.p2, P1, 1); }
   scene.updateAim(mine.kick, world.P);
   scene.updateCamera(view.px, view.pz, view.yaw, dtReal);
   game.lab?.onFrame(dtReal);
