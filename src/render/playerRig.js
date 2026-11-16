@@ -95,7 +95,9 @@ export class PlayerRig {
     // kneeFront — насколько колено обязано смотреть вперёд-вверх от линии бедро — стопа (0 — на линии, 1 — строго вперёд);
     // kneeRate — предел скорости поворота колена вокруг этой линии, 1/с.
     this.adapt = { kickLeg: true, kickRef: true, kickReach: 0.45, simLead: 0.14, simHold: 0.12, simAfter: 0.15, kneeFront: 0.25, kneeRate: 30,
-      antLead: 0.55, antFull: 0.2, pelvisReach: 0.18, legMin: 0.9, legMax: 0.97, clipLead: 0.15, leadBall: 0.67, idleCalm: 0.6, idleDrop: 0.012, // at rest: share of the clip's pelvis sway and bob removed; extra crouch, m
+      antLead: 0.55, antFull: 0.2, pelvisReach: 0.18, legMin: 0.9, legMax: 0.97, clipLead: 0.15, leadBall: 0.67, idleCalm: 0.6, idleDrop: 0.012,
+      slide: { drop: 0.75, back: 0.75, roll: 0.5, turn: 0.35, hipBack: 0.16, tuckFwd: 0.34, tuckIn: 0.06, curl: [0.92, 0.8, 0.66, 0.42, 0.12] }, // curl: share of the body tilt taken by Spine, Spine1, chest, neck, head; // tuck*: where the foot of the bent leg lies, m forward of the body and across to the leading side // slide tackle: pelvis drop, m; lean back, roll onto the side and turn of the chest, rad
+      // at rest: share of the clip's pelvis sway and bob removed; extra crouch, m
       legFree: 0.85, legBall: 0.2 };
     // clipLead — the run clip is sampled this share of the cycle ahead of the sim phase: measured, the clip's pelvis was lowest
     //   at the toe-off instead of the middle of the support (the body sank in flight and rose on landing);
@@ -381,6 +383,14 @@ export class PlayerRig {
     // падение после удара через себя: наклон всего тела назад (и разворот набок), высота таза, наклон вперёд при подъёме
     const fl = aux.fall, sm01 = (x) => { const y = clamp(x, 0, 1); return y * y * (3 - 2 * y); };
     let tiltT = 0, dropT = 0, fwdT = 0;
+    // slide tackle, getting up in order: first the pelvis comes forward over the feet and the torso sits up (the hand
+    // pushes off the turf), only then the body rises. With one weight for everything the body rose while still behind
+    // the feet and then caught up with them.
+    const sE = aux.slide ? aux.slide.ext : 0, sRise = !!aux.slide && aux.slide.t > 0.2 && sE < 0.999, sT0 = aux.slide ? Math.max(sE, 0.25) : 0;
+    const sBack = clamp(this._spring('slBack', sRise ? sm01((sE - 0.45) / 0.55) : sT0, 10, 1, dt), 0, 1);
+    const sHip = clamp(this._spring('slHip', sRise ? sm01((sE - 0.6) / 0.4) : sT0, 10, 1, dt), 0, 1);
+    const sDrop = clamp(this._spring('slDrop', sRise ? Math.pow(sE, 0.55) : sT0, 10, 1, dt), 0, 1);
+    const sUp = this._spring('slUp', sRise ? Math.sin(Math.PI * (1 - sE)) : 0, 8, 1, dt); // the lean over the feet while rising
     const sideFall = !!fl && fl.kind === 'side';
     if (sideFall) {
       // сбоку в полёте: до контакта корпус завален вбок; после него тело выпрямляется, разворачиваясь вслед за ногой,
@@ -407,12 +417,16 @@ export class PlayerRig {
     }
     const tilt = this._spring('tilt', tiltT, fl && (fl.phase === 'rise' || (sideFall && fl.spinT > 0)) ? 12 : 9, 1, dt), drop = clamp(this._spring('fdrop', dropT, 10, 1, dt), 0, 0.8), lie = drop / 0.74;
     const rollB = this._spring('froll', fl ? fl.roll * 1.15 : 0, 6, 1, dt) * clamp(tilt / 1.2, 0, 1);
-    const tilted = tilt > 0.02;
+    // slide tackle: the body goes down onto the hip of the trailing leg — leaning back and rolled onto that side
+    if (aux.slide) { this._slSide = aux.slide.foot ? -1 : 1; this._slLead = aux.slide.foot; } // the side that touches the turf: opposite to the leading leg
+    const slT = !fl && sl > 0.02, SL = this.adapt.slide;
+    const tilted = tilt > 0.02 || slT;
     // на спину — наклон назад вокруг поперечной оси (с разворотом набок); сбоку в полёте — завал вбок от бьющей ноги вокруг продольной
     // ось завала — исходная линия удара: она стоит на месте, пока тело разворачивается вокруг своей оси
     if (!fl && kick && kick.fly && kicking) { this._fallSide = kick.fly; (this._fallAxis || (this._fallAxis = new THREE.Vector3())).set(kick.ax, 0, kick.az); }
     if (fl) { this._fallSide = sideFall ? fl.side : 0; if (sideFall) (this._fallAxis || (this._fallAxis = new THREE.Vector3())).set(fl.ax0, 0, fl.az0); }
-    const bodyQ = this._fallSide
+    const bodyQ = slT ? new THREE.Quaternion().setFromAxisAngle(r, SL.back * sBack).multiply(new THREE.Quaternion().setFromAxisAngle(f, this._slSide * SL.roll * sBack)).multiply(new THREE.Quaternion().setFromAxisAngle(UP, -this._slSide * SL.turn * sBack))
+      : this._fallSide
       ? new THREE.Quaternion().setFromAxisAngle(this._fallAxis, -this._fallSide * tilt)
       : new THREE.Quaternion().setFromAxisAngle(r, tilt).multiply(new THREE.Quaternion().setFromAxisAngle(UP, rollB));
     const lobW = clamp(this._spring('lob', kick && kick.type === 'lob' && kicking ? 1 : 0, 7, 1, dt), 0, 1);
@@ -460,7 +474,7 @@ export class PlayerRig {
     const jp = aux.jumpPrep > 0 && !air ? clamp(1 - aux.jumpPrep / 0.075, 0.25, 1) : 0, jU = air ? clamp((aux.vy || 0) / 3.7, -1, 1) : 0;
     const jpS = this._spring('jPrep', jp, 12, 1, dt);
     leanFT += 0.9 * jpS + 0.5 * Math.max(0, this.sp.squash ? this.sp.squash.x : 0) / 0.1 * 0.2;
-    const leanF = this._spring('leanF', leanFT, 3.4, 0.8, dt) - KP.back * (1 - bk) - (fl ? 0.1 : 0.8) * bk + refLean - 0.5 * sl - 0.14 * lobW - 0.1 * rc + this._spring('fFwd', fwdT, 12, 1, dt);
+    const leanF = this._spring('leanF', leanFT, 3.4, 0.8, dt) - KP.back * (1 - bk) - (fl ? 0.1 : 0.8) * bk + refLean + 0.32 * sUp - 0.14 * lobW - 0.1 * rc + this._spring('fFwd', fwdT, 12, 1, dt);
     const leanS = this._spring('leanS', clamp(0.017 * this._acc.r, -0.3, 0.3), 3.4, 0.75, dt) + sideA * KP.side + this._kSide * refSide; // наклон от бьющей ноги к опорной (знак проверен пробой позы: раньше корпус клонился к мячу)
     const yawQ = this._yawQuat(th, new THREE.Quaternion());
     let dYaw = this._prevYaw === undefined ? 0 : th - this._prevYaw; this._prevYaw = th;
@@ -505,7 +519,8 @@ export class PlayerRig {
       if (sideFall && fl.phase === 'air') { swT *= 0.3; abdT = Math.max(abdT, 1.05); flexT *= 0.4; } // в полёте руки раскинуты
       if (sideFall && fl.phase === 'land') { const k = clamp(1 - fl.t / 0.3, 0, 1); abdT = Math.max(abdT, 0.3 + 0.5 * k); flexT = 0.35; swT *= 0.4; } // на посадке — в стороны, для баланса
       if (lie > 0.01 && !sideFall) { swT += (0 - swT) * lie; abdT = Math.max(abdT, 0.95 * lie * (1 - 0.6 * Math.min(1, Math.abs(rollB))) * (this._fallSide ? 0.45 : 1)); flexT += (0.25 - flexT) * lie; } // лёжа руки раскинуты
-      if (sl > 0.01) { swT += (-0.35 - swT) * sl; abdT = Math.max(abdT, 0.55 * sl); flexT += (0.3 - flexT) * sl; }
+      // slide: the arm away from the turf is thrown up and out for balance; the other one goes to the turf (placed below)
+      if (sl > 0.01) { const upArm = side !== this._slSide; swT += ((upArm ? 0.35 : -0.5) - swT) * sl; abdT = Math.max(abdT, (upArm ? 1.15 : 0.5) * sl); flexT += ((upArm ? 0.45 : 0.2) - flexT) * sl; }
       if (bk > 0.01) { swT += (0.35 - swT) * bk; abdT = Math.max(abdT, 0.6 * bk); flexT += (0.4 - flexT) * bk; } // руки в стороны для баланса
       if (jg > 0.01 && !kOn && !air) { abdT = Math.max(abdT, (0.3 + 0.18 * jb) * jg); swT += side * 0.12 * jb * jg * (aux.juggle && aux.juggle.side > 0 ? 1 : -1); } // arms out for balance, they answer every touch
       if (gd > 0.01 && !kOn && !air) { const k = gd * gProc; swT += (0.28 - swT) * k; abdT = Math.max(abdT, 0.55 * k); flexT += (0.75 - flexT) * k; }
@@ -514,10 +529,14 @@ export class PlayerRig {
       const fore = addQ.clone().multiply(_q.setFromAxisAngle(r, sw + flex)).multiply(_q2.setFromAxisAngle(f, -side * abd));
       return { upper, fore };
     });
-    const world = (name, extra) => {
+    // bk — share of the whole-body tilt this bone takes. In the slide the pelvis lies back on the turf, but the spine curls
+    // up from it and the head stays level, eyes on the ball: a body tilted as one plank looked detached
+    const _qb = new THREE.Quaternion();
+    const world = (name, extra, bk = 1) => {
       const q = (extra ? extra.clone().multiply(yawQ) : yawQ.clone()).multiply(pose.get(name)).multiply(R[name].q);
-      setWorldQuat(B[name], tilted ? q.premultiply(bodyQ) : q);
+      setWorldQuat(B[name], tilted ? q.premultiply(bk === 1 ? bodyQ : _qb.identity().slerp(bodyQ, bk)) : q);
     };
+    const curl = slT ? this.adapt.slide.curl : [1, 1, 1, 1, 1];
 
     const fo = [0, 1].map((i) => (s.feet[i].x - s.px) * f.x + (s.feet[i].z - s.pz) * f.z);
 
@@ -543,6 +562,14 @@ export class PlayerRig {
         const tuck = 1 - jU * jU; // the height of the feet comes from the sim; here only the fore-aft split at the top
         x += f.x * (i ? 0.05 : -0.1) * tuck; z += f.z * (i ? 0.05 : -0.1) * tuck;
       }
+      // slide tackle, the tucked leg (coaching references: the player lands on the hip and the outside of the bent leg, which
+      // lies folded under the body like in a baseball slide): the shin lies on the turf across, under the thigh of the leading
+      // leg, the knee points forward and out. The sim keeps this foot behind the body, which folded the knee upwards.
+      if (slT && i !== this._slLead) {
+        const T = this.adapt.slide, k = sm01(sl * 1.2);
+        x += (s.px + f.x * T.tuckFwd - r.x * this._slSide * T.tuckIn - x) * k; z += (s.pz + f.z * T.tuckFwd - r.z * this._slSide * T.tuckIn - z) * k;
+        h += (s.py + 0.05 - h) * k; yaw += this._slSide * 0.9 * k;
+      }
       return { x, z, h, yaw, planted: ft.planted && !lifted && !stopping, u: ft.u || 0, top: !!ft.top };
     });
     const sup = feetT.map((ft) => (ft.planted ? 1 : 0));
@@ -557,10 +584,10 @@ export class PlayerRig {
     // So at rest the sway and the bob are damped and the stance sits a little lower: the knees keep a reserve
     const idleW = clamp(this.sp.wIdle ? this.sp.wIdle.x : 0, 0, 1) * (1 - gd);
     const crouch = 0.012 + 0.012 * run * (1 - wk) /* the run lands on a bent knee, not on a straight leg */ + KP.drop +Math.min(0.05, accMag * 0.0035) + (kPhase === 'windup' || kPhase === 'swing' ? 0.02 + 0.02 * kc : 0)
-      + (feetT[0].top || feetT[1].top ? 0.03 : 0) + Math.max(0, squash) + 0.15 * jpS + 0.1 * gd + 0.5 * sl + 0.3 * rc + drop + this.adapt.idleDrop * idleW + (0.01 + 0.026 * (1 - jb)) * jg; // juggling: soft knees between the touches, the body rises into every touch (the working leg meets the ball straight)
+      + (feetT[0].top || feetT[1].top ? 0.03 : 0) + Math.max(0, squash) + 0.15 * jpS + 0.1 * gd + SL.drop * sDrop + 0.3 * rc + drop + this.adapt.idleDrop * idleW + (0.01 + 0.026 * (1 - jb)) * jg; // juggling: soft knees between the touches, the body rises into every touch (the working leg meets the ball straight)
     const swayX = pose.hips.x * this.hipRestY * (1 - this.adapt.idleCalm * idleW);
     const hipBack = refW > 0.01 ? profile(KICK_REF.hipBack, this._kc) * refW : 0;
-    const hipB = hipBack + 0.05 * jg; // juggling: the pelvis stays behind the ball, the working leg reaches forward nearly straight
+    const hipB = hipBack + 0.05 * jg + this.adapt.slide.hipBack * sHip - 0.1 * sUp; // slide: the pelvis trails behind, the leading leg stretches out to the ball // juggling: the pelvis stays behind the ball, the working leg reaches forward nearly straight
     const cx = s.px + r.x * -swayX + f.x * (leanF * 0.15 - hipB), cz = s.pz + r.z * -swayX + f.z * (leanF * 0.15 - hipB);
     let allowed = 9;
     const A0 = new THREE.Vector3();
@@ -577,7 +604,7 @@ export class PlayerRig {
         this.diag.cap[i] = cap;
         allowed = Math.min(allowed, cap);
       }
-      allowed = Math.max(allowed, this.hipRestY - 0.16 - 0.08 * gd - 0.5 * sl - 0.22 * rc - 0.8 * lie);
+      allowed = Math.max(allowed, this.hipRestY - 0.16 - 0.08 * gd - (SL.drop + 0.04) * sDrop - 0.22 * rc - 0.8 * lie);
     }
     // ходьба: у бегового клипа таз ниже всего в середине опоры, у шага — наоборот. Высоту задаёт сама опорная нога:
     // почти прямая, таз идёт над ней дугой — выше всего над стопой, ниже всего на двойной опоре
@@ -719,6 +746,8 @@ export class PlayerRig {
       dir.subVectors(A, H).normalize();
       bend.copy(ff).multiplyScalar(0.5).addScaledVector(f, 0.5).addScaledVector(r, L.side * 0.12);
       if (tilted) bend.applyQuaternion(bodyQ); // «вперёд» для колена — по корпусу, а корпус наклонён
+      const tuck = slT && i !== this._slLead ? sm01(sl * 1.2) : 0;
+      if (tuck > 0) bend.multiplyScalar(1 - tuck).addScaledVector(r, this._slSide * 1.0 * tuck).addScaledVector(f, 0.45 * tuck).addScaledVector(UP, -0.1 * tuck); // the tucked knee lies out to the side, on the turf
       if (sideFall) bend.addScaledVector(cA.copy(UP).applyQuaternion(bodyQ), 0.45); // in a fall or a spin the hint never degenerates: a leg pointing along the body front bends with the knee towards the chest
       // бьющая нога на весу: колено смотрит вверх и наружу, а не строго вперёд — иначе бедро выворачивается
       // kick-leg weight fades out smoothly after the kick: the knee hint must not jump on the frame the kick ends
@@ -749,7 +778,7 @@ export class PlayerRig {
         hinge.normalize();
         // у ноги, отведённой в сторону для удара с лёта, колено смотрит наружу — предел для неё только «не назад»
         const front = bend.dot(hinge), need = this.adapt.kneeFront * (1 - 0.9 * Math.min(1, KP.high) * kw);
-        if (front < need) bend.addScaledVector(hinge, need - front).normalize();
+        if (front < need && tuck < 0.5) bend.addScaledVector(hinge, need - front).normalize(); // (the tucked leg of the slide lies on its side: the forward-and-up rule would stand its knee upright)
       }
       (L.pole || (L.pole = new THREE.Vector3())).copy(bend);
       const cosA = clamp((L.l1 * L.l1 + dist * dist - L.l2 * L.l2) / (2 * L.l1 * dist), -1, 1);
@@ -777,15 +806,16 @@ export class PlayerRig {
 
     // ----- корпус, плечи, руки: поза из motion capture; сверху — добавочный наклон, растущий к груди
     const part = (k, tw) => new THREE.Quaternion().setFromAxisAngle(r, -leanF * k).multiply(_q.setFromAxisAngle(f, -leanS * k)).multiply(twQ(tw));
-    world('Spine', part(0.75, 0.1)); world('Spine1', part(0.9, 0.55)); world('Spine2', addQ);
-    world('LeftShoulder', addQ); world('RightShoulder', addQ);
+    world('Spine', part(0.75, 0.1), curl[0]); world('Spine1', part(0.9, 0.55), curl[1]); world('Spine2', addQ, curl[2]);
+    world('LeftShoulder', addQ, curl[2]); world('RightShoulder', addQ, curl[2]);
     world('LeftArm', armQ[0].upper); world('LeftForeArm', armQ[0].fore); world('LeftHand', armQ[0].fore);
     world('RightArm', armQ[1].upper); world('RightForeArm', armQ[1].fore); world('RightHand', armQ[1].fore);
 
     // ----- падение: рука встречает покрытие и служит опорой при подъёме. Работает рука с нижней стороны (на спине — обе):
     // в воздухе после удара кисть тянется к покрытию под плечом, с приземления стоит на месте, пока корпус на ней приподнимается
     const handFall = !!fl && !sideFall; // after the side volley the player lands on his feet: the arms balance, they do not go to the turf // после удара сбоку рука тянется к покрытию на посадке
-    if (handFall || this._armW) {
+    const handSlide = slT && sl > 0.15;
+    if (handFall || handSlide || this._armW) {
       const aw = this._armW || (this._armW = [0, 0]), hT = this._handT || (this._handT = [new THREE.Vector3(), new THREE.Vector3()]);
       const S = [B.LeftArm.getWorldPosition(new THREE.Vector3()), B.RightArm.getWorldPosition(new THREE.Vector3())];
       const sp = B.Spine2.getWorldPosition(new THREE.Vector3()), chest = new THREE.Vector3().copy(f).applyQuaternion(bodyQ);
@@ -805,6 +835,11 @@ export class PlayerRig {
             const out = new THREE.Vector3(S[i].x - sp.x, 0, S[i].z - sp.z); if (out.length() > 0.05) out.normalize(); else out.set(0, 0, 0);
             hT[i].set(S[i].x, ground + 0.05, S[i].z).addScaledVector(out, 0.2).addScaledVector(v.set(fl.ux, 0, fl.uz), 0.12).addScaledVector(v.set(chest.x, 0, chest.z), sideFall ? 0.28 : 0);
           }
+        }
+        if (handSlide && (i ? 1 : -1) === this._slSide) {
+          // the hand on the turf side: on the ground beside the hip, a little behind — it takes the weight and pushes the body up
+          wT = sm01(sl * 1.4);
+          hT[i].set(S[i].x, ground + 0.05, S[i].z).addScaledVector(r, this._slSide * 0.2).addScaledVector(f, -0.1);
         }
         const w = aw[i] = clamp(aw[i] + (wT - aw[i]) * (dt > 0 ? Math.min(1, 12 * dt) : 1), 0, 1);
         if (w < 0.01) continue;
@@ -846,10 +881,10 @@ export class PlayerRig {
     }
     const look = this._spring('look', lookT, 4, 0.85, dt);
     const lookPitch = this._spring('lookP', lookP, 4, 0.85, dt);
-    world('Neck', part(1, 0.4));
+    world('Neck', part(1, 0.4), curl[3]);
     // поворот к мячу: вокруг вертикали (в осях сцены положительный угол рыскания — по часовой сверху)
     const headExtra = new THREE.Quaternion().setFromAxisAngle(UP, -look).multiply(_q.setFromAxisAngle(r, -(lookPitch + leanF * 0.5) + (g && g.type === 'head' ? 0.35 * gw : 0))).multiply(_q2.setFromAxisAngle(f, -leanS * 0.5));
-    world('Head', headExtra);
+    world('Head', headExtra, curl[4]);
   }
 
   // Положение голеностопа при наклоне стопы: pitch > 0 — вокруг подушечки (пятка вверх),

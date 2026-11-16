@@ -453,7 +453,10 @@ export class World {
       const bx = b.x - p.x, bz = b.z - p.z, bd = Math.hypot(bx, bz);
       if (bd > 0.3 && bd < 4) { dx = bx / bd; dz = bz / bd; }
     }
-    const lat = (b.x - p.x) * -dz + (b.z - p.z) * dx; // ведущая нога — со стороны мяча
+    // ведущая нога — правая; левая — только когда мяч рядом и явно слева по ходу подката. Иначе нога зависела бы от того,
+    // с какой стороны лежит далёкий мяч, то есть от направления подката на площадке
+    const fwdB = (b.x - p.x) * dx + (b.z - p.z) * dz, latB = (b.x - p.x) * -dz + (b.z - p.z) * dx;
+    const lat = fwdB > -0.3 && fwdB < 3 && latB < -0.12 && latB > -1.2 ? -1 : 1;
     if (p.reach) this._endReach(p);
     p.slide = { t: 0, dx, dz, foot: lat >= 0 ? 1 : 0, hit: false, ext: 0 };
     p.guard = false; p.gait = false; p.recover = null;
