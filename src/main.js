@@ -440,7 +440,7 @@ function runFrame(now) {
   const mine = world.players[sess && sess.me === 1 ? 1 : 0];
   scene.updateBall(view.bx, view.by, view.bz, cur.bqx, cur.bqy, cur.bqz, cur.bqw);
   scene.updateNets(view.bx, view.by, view.bz, dtReal);
-  const auxOf = (q) => ({ ball, kick: q.kick, gesture: q.gesture, guard: q.guard || !!q.lunge, withBall: !!q.possession, juggle: !!q.juggle, slide: q.slide, reach: q.reach, fall: q.fall });
+  const auxOf = (q) => ({ ball, kick: q.kick, gesture: q.gesture, guard: q.guard || !!q.lunge, withBall: !!q.possession, juggle: !!q.juggle, slide: q.slide, reach: q.reach, fall: q.fall, jumpPrep: q.jumpPrep, vy: q.vy });
   rig.update(view, auxOf(P0), dtVis);
   if (online && P1) rig2.update(view.p2, auxOf(P1), dtVis);
   scene.updateAim(mine.kick, world.P);

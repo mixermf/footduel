@@ -265,7 +265,7 @@ test('flying side volley: arrows do nothing until touchdown, the player does not
   assert.ok(Math.hypot(idle.land[0] - idle.hit[0], idle.land[1] - idle.hit[1]) < 0.3, 'after the kick the player comes down almost in place');
   assert.ok((idle.spunAt - idle.hitAt) / 120 < 0.4, 'the turn is done within 0.4 s of the kick: ' + ((idle.spunAt - idle.hitAt) / 120).toFixed(2));
   assert.ok(idle.spunAt < idle.landAt, 'and before touchdown');
-  assert.ok((idle.freeAt - idle.landAt) / 120 > 0.4, 'without a command the low landing stance plays out');
+  assert.ok((idle.freeAt - idle.landAt) / 120 > 0.3 && (idle.freeAt - idle.landAt) / 120 < 0.45, 'without a command the short landing stance plays out');
 });
 
 test('lob with the ball in the air: a ball bouncing or dropping by the player is his ball - A lobs it on the volley, no slide', () => {
@@ -412,17 +412,18 @@ test('vertical aim: holding towards the goal lifts the shot, away from the goal 
 
 test('ball at chest or head height: one touch with the body, the ball comes off in front (or to the side if directed) and drops to the feet', () => {
   const feed = (kind, mode) => {
-    const [dx, y0, sp, hT] = { chest: [6, 0.8, 11, 1.3], head: [6, 1.0, 10, 1.75], drop: [0.05, 3.2, 0, 0], hard: [7, 0.9, 17, 1.3] }[kind];
-    const w = make('motor'), p = w.player, b = w.ball, P = w.P;
     const hold = mode === 'guard' || mode === 'side' ? { guardHeld: true, superHeld: true } : {};
+    // in the stance the head is lower (1.58 m against 1.82 m standing): the head-high ball is fed lower too
+    const [dx, y0, sp, hT] = { chest: [6, 0.8, 11, 1.3], head: [6, 1.0, 10, hold.guardHeld ? 1.5 : 1.75], over: [6, 1.0, 10, 1.75], drop: [0.05, 3.2, 0, 0], hard: [7, 0.9, 17, 1.3] }[kind];
+    const w = make('motor'), p = w.player, b = w.ball, P = w.P;
     for (let i = 0; i < 40; i++) w.step(inp(hold));
-    b.x = p.x + dx; b.z = p.z; b.y = y0; b.vz = 0;
+    b.x = p.x + dx + (kind === 'drop' ? P.guard.lean * p.crouch : 0); b.z = p.z; b.y = y0; b.vz = 0; // the drop lands on the head, and in the stance the head is forward of the hips
     if (sp > 0) { const t = dx / sp; b.vx = -sp * 1.05; b.vy = (hT - y0 + 4.905 * t * t) / t; } else { b.vx = 0; b.vy = 0; }
     const r = { body: 0, onTop: 0, inside: 0, first: -1, down: null, z0: p.z, landZ: null, landX: null, apexAfter: 0 };
     for (let i = 0; i < 360; i++) {
       const near = Math.hypot(b.x - p.x, b.z - p.z) < 1.5;
       w.step(inp({ ...hold, mz: mode === 'side' && near && r.down === null ? -1 : 0 }));
-      for (const e of w.events) if ((e.type === 'receive' && e.zone !== 'foot') || e.type === 'body') { r.body++; if (r.first < 0) r.first = i; }
+      for (const e of w.events) if ((e.type === 'receive' && e.zone !== 'foot') || e.type === 'body') { r.body++; if (r.first < 0) { r.first = i; r.zone = e.zone; } }
       if (r.first >= 0) {
         const d = Math.hypot(b.x - p.x, b.z - p.z);
         if (d < P.player.radius - 0.02 && b.y > 0.3 && b.y < P.player.height) r.inside++;
@@ -440,8 +441,89 @@ test('ball at chest or head height: one touch with the body, the ball comes off 
     assert.ok(r.down !== null && r.down < 1.0, tag + 'it is down at the feet within a second: ' + r.down);
     assert.ok(r.landX > 0.3 && r.landX < 3.2, tag + 'and in front of the player: ' + r.landX.toFixed(2));
   }
+  // the body collider follows the model: a ball at standing head height hits the standing player and passes over the crouched one
+  assert.equal(feed('head', 'none').zone, 'head', 'standing: taken on the head');
+  assert.equal(feed('head', 'guard').zone, 'head', 'stance: a lower ball is taken on the head');
+  assert.equal(feed('over', 'none').body, 1, 'ball at 1.75 m meets the standing head');
+  assert.equal(feed('over', 'guard').body, 0, 'the same ball flies over the head of the player in the stance');
   const soft = feed('hard', 'guard'), rough = feed('hard', 'none');
   assert.ok(rough.landX > soft.landX + 0.5, `without the stance the bounce is rougher: ${rough.landX.toFixed(2)} vs ${soft.landX.toFixed(2)}`);
   const side = feed('chest', 'side'), fwd = feed('chest', 'guard');
   assert.ok(side.landZ < -0.35 && Math.abs(fwd.landZ) < 0.15, `held direction sends the ball that way: ${side.landZ.toFixed(2)} vs ${fwd.landZ.toFixed(2)}`);
+});
+
+test('jump: a short crouch before the push-off, legs tucked at the top and reaching for the turf before landing', () => {
+  const w = make('motor'), p = w.player, b = w.ball, P = w.P;
+  b.x = p.x + 9; b.z = p.z + 6;
+  for (let i = 0; i < 30; i++) w.step(inp({}));
+  let off = -1, top = 0, tuckTop = 0, relLand = null, land = -1;
+  for (let i = 0; i < 160 && land < 0; i++) {
+    w.step(inp({ jumpPressed: i === 0 }));
+    if (p.y > 0 && off < 0) off = i;
+    if (p.y > top) { top = p.y; tuckTop = Math.max(p.feet[0].h, p.feet[1].h) - p.y; }
+    if (off >= 0 && p.y > 0) relLand = Math.max(p.feet[0].h, p.feet[1].h) - p.y;
+    if (off >= 0 && p.y <= 0) land = i;
+  }
+  assert.ok(off >= 6 && off <= 12, 'the player leaves the turf after the crouch, tick ' + off);
+  assert.ok(top > 0.6, 'jump height is unchanged: ' + top.toFixed(2));
+  assert.ok(tuckTop > 0.12, 'legs are tucked at the top: ' + tuckTop.toFixed(2));
+  assert.ok(relLand < 0.06, 'feet are down under the body before landing: ' + relLand.toFixed(2));
+  assert.ok(p.feet[0].planted && p.feet[1].planted && p.feet[0].h === 0, 'both feet planted on landing');
+});
+
+test('kick held while the ball flies past: the player does not chase it backwards', () => {
+  for (const [lat, speed] of [[2.5, 12], [1.5, 18], [1.8, 12], [1.0, 9]]) {
+    const w = make('motor'), p = w.player, b = w.ball, dir = -p.side;
+    for (let i = 0; i < 40; i++) w.step(inp({}));
+    b.x = p.x + dir * 7; b.z = p.z + lat; b.y = 0.4; b.vx = -dir * speed; b.vz = 0; b.vy = 1.2;
+    let back = 0, backM = 0, v = 0;
+    for (let i = 0; i < 220; i++) {
+      w.step(inp({ kickHeld: i < 180, kickPressed: i === 0 }));
+      const bs = -(p.vx * Math.cos(p.yaw) + p.vz * Math.sin(p.yaw));
+      back = Math.max(back, bs); if (bs > 0.3) backM += bs / 120; v = Math.max(v, Math.hypot(p.vx, p.vz));
+    }
+    const tag = `ball ${lat} m aside at ${speed} m/s: `;
+    assert.ok(back < w.P.kick.strikeBack + 0.8, tag + 'backwards no faster than a back-step: ' + back.toFixed(2));
+    assert.ok(backM < 2.2, tag + 'and not far: ' + backM.toFixed(2));
+    assert.ok(v <= w.P.kick.strikeSpeed + 0.2, tag + 'speed ' + v.toFixed(2));
+  }
+});
+
+test('kick held, ball out of reach: one short step towards it to show the intent, then the player stops', () => {
+  const w = make('motor'), p = w.player, b = w.ball, dir = -p.side;
+  for (let i = 0; i < 40; i++) w.step(inp({}));
+  b.x = p.x + dir * 7; b.z = p.z + 2.5; b.y = 0.4; b.vx = -dir * 12; b.vz = 0; b.vy = 1.2;
+  const x0 = p.x, z0 = p.z; let far = 0, kicked = false;
+  for (let i = 0; i < 240; i++) {
+    w.step(inp({ kickHeld: i < 200, kickPressed: i === 0 }));
+    for (const e of w.events) if (e.type === 'kick') kicked = true;
+    far = Math.max(far, Math.hypot(p.x - x0, p.z - z0));
+  }
+  assert.ok(!kicked, 'the ball is not reached');
+  assert.ok(far > 0.35 && far < 1.0, 'a step towards the ball, not a chase: ' + far.toFixed(2));
+  assert.ok(p.z - z0 > 0.2, 'the step goes to the side the ball passed on');
+  assert.ok(Math.hypot(p.vx, p.vz) < 0.3, 'and the player has stopped');
+});
+
+test('kick held with no ball in the strike zone: the arrows move the player, and he strikes once he is brought to the ball', () => {
+  const w = make('motor'), p = w.player, b = w.ball, dir = -p.side;
+  for (let i = 0; i < 30; i++) w.step(inp({}));
+  b.x = p.x + dir * 2; b.z = p.z + 7; b.y = w.P.ball.radius; b.vx = b.vy = b.vz = 0; // lying ball, 7 m to the side
+  const z0 = p.z; let kicked = false, ended = false, vTop = 0, aimTop = 0, freeTicks = 0;
+  for (let i = 0; i < 700 && !kicked; i++) {
+    const near = Math.hypot(b.x - p.x, b.z - p.z) < 2.6;
+    w.step(inp({ kickHeld: true, kickPressed: i === 0, mz: near ? 0 : 1 }));
+    for (const e of w.events) { if (e.type === 'kick') kicked = true; if (e.type === 'kick_empty' || e.type === 'kick_cancel') ended = true; }
+    if (p.kick && p.kick.free) { freeTicks++; vTop = Math.max(vTop, Math.hypot(p.vx, p.vz)); aimTop = Math.max(aimTop, Math.abs(p.kick.aimLat)); }
+  }
+  assert.ok(!ended, 'the held kick is not cancelled while the player is being led to the ball');
+  assert.ok(freeTicks > 60 && vTop > w.P.player.runSpeed * 0.9, 'he runs where the arrows say: ' + vTop.toFixed(2));
+  assert.ok(aimTop < 0.2, 'the arrows do not turn the aim meanwhile: ' + aimTop.toFixed(2));
+  assert.ok(p.z - z0 > 4, 'he has come to the ball');
+  assert.ok(kicked, 'and strikes it');
+  // released far from the ball: the kick ends as before
+  const w2 = make('motor'), q = w2.player; let empty = false;
+  w2.ball.x = q.x + 2; w2.ball.z = q.z + 7;
+  for (let i = 0; i < 200; i++) { w2.step(inp({ kickHeld: i < 60, kickPressed: i === 0, mz: i < 60 ? -1 : 0 })); for (const e of w2.events) if (e.type === 'kick_empty') empty = true; }
+  assert.ok(empty && !q.kick, 'released away from the ball: an empty kick');
 });
