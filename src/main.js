@@ -8,7 +8,8 @@ import { Hud } from './ui/hud.js';
 import { Sfx } from './audio/sfx.js';
 import { NetClient } from './net/client.js';
 import { Lobby } from './net/lobby.js';
-import { BALL_EVENTS } from './net/protocol.js';
+import { BALL_EVENTS, COUNTDOWN_MS, SHIRT_NUMBERS } from './net/protocol.js';
+import { MatchIntro, INTRO, blendView } from './render/intro.js';
 
 const LAB_ENABLED = import.meta.env.DEV || import.meta.env.MODE === 'lab';
 const SETTINGS_KEY = 'soccer-duel-desktop.settings.v1';
@@ -243,6 +244,19 @@ const pending = { ret: false, serve: false, wall: false };
 function toggleWall() { pending.wall = true; }
 function nextServe() { pending.serve = true; }
 
+let intro = null, introWas = false; const introV = [{}, {}]; // сцена выхода перед сетевым матчем
+// Лаборатория: показать кадр сцены выхода без сервера — introPreview(t), t в секундах от начала; introPreview(-1) — выключить
+game.introPreview = (t, dt = 1 / 60) => {
+  if (t < 0) { scene.cine = null; rig2.root.visible = game.mode === 'online'; game.introFrame = null; return null; }
+  if (!intro) intro = new MatchIntro();
+  const fr = intro.frame(t);
+  rig2.root.visible = true; rig2.setBack('Гость', 9);
+  rig.update(fr.v[0], fr.aux[0], dt); rig2.update(fr.v[1], fr.aux[1], dt);
+  scene.cine = fr.cam; scene.updateCamera(0, 0, 0, dt); scene.render(dt);
+  game.introFrame = fr;
+  return fr;
+};
+
 // шаги: звук в момент, когда стопа встала на покрытие; громче на бегу, не звучит в воздухе, в подкате и лёжа
 const stepState = [[true, true], [true, true]];
 function stepSound(v, q, idx) {
@@ -458,8 +472,24 @@ function runFrame(now) {
   scene.updateBall(view.bx, view.by, view.bz, cur.bqx, cur.bqy, cur.bqz, cur.bqw);
   scene.updateNets(view.bx, view.by, view.bz, dtReal);
   const auxOf = (q) => ({ ball, kick: q.kick, gesture: q.gesture, guard: q.guard || !!q.lunge, withBall: !!q.possession, juggle: q.juggle, slide: q.slide, reach: q.reach, fall: q.fall, jumpPrep: q.jumpPrep, vy: q.vy });
-  rig.update(view, auxOf(P0), dtVis);
-  if (online && P1) rig2.update(view.p2, auxOf(P1), dtVis);
+  // сцена выхода перед сетевым матчем: пока идёт отсчёт, игроков и камеру ведёт постановка, к концу она сходится к игре
+  const L = sess?.lobby, introOn = online && !!L && L.state === 'countdown' && !!L.intro && sess.hasState && !!P1;
+  if (L && L.players[0]) rig.setBack(L.players[0].name, L.players[0].num || 10);
+  if (L && L.players[1]) rig2.setBack(L.players[1].name, L.players[1].num || 9);
+  if (introOn) {
+    if (!intro) intro = new MatchIntro();
+    const total = COUNTDOWN_MS / 1000, t = total - Math.max(0, L.timer - (now - sess.lobbyAt)) / 1000;
+    if (!introWas) intro.reset();
+    const fr = intro.frame(t), k = Math.max(0, Math.min(1, (t - (total - INTRO.blend)) / (INTRO.blend - 0.05))), kk = k * k * (3 - 2 * k);
+    rig.update(kk > 0 ? blendView(introV[0], fr.v[0], view, kk) : fr.v[0], fr.aux[0], dtReal);
+    rig2.update(kk > 0 ? blendView(introV[1], fr.v[1], view.p2, kk) : fr.v[1], fr.aux[1], dtReal);
+    scene.cine = fr.cam;
+  } else {
+    scene.cine = null;
+    rig.update(view, auxOf(P0), dtVis);
+    if (online && P1) rig2.update(view.p2, auxOf(P1), dtVis);
+  }
+  introWas = introOn;
   if (running) { stepSound(view, P0, 0); if (online && P1) stepSound(view.p2, P1, 1); }
   scene.updateAim(mine.kick, world.P);
   scene.updateCamera(view.px, view.pz, view.yaw, dtReal);
@@ -478,6 +508,8 @@ async function boot() {
     await rig2.load(scene.scene, profile.player.height);
     rig2.setKit(0xd8432f, 0x7f1c17); // соперник справа — в красном (свой игрок — в синем, цвет задан в риге)
     rig2.root.visible = false;
+    // в песочнице — своё имя из лобби (если вводилось) и случайный номер
+    rig.setBack(lobby.name || 'Игрок', SHIRT_NUMBERS[Math.floor(Math.random() * SHIRT_NUMBERS.length)]);
     if (LAB_ENABLED) console.info('[rig]', info);
   } catch (err) {
     loading.textContent = 'Не удалось загрузить модель: ' + err.message;

@@ -213,6 +213,7 @@ export class PlayerRig {
     this.skeletonHelper = new THREE.SkeletonHelper(model);
     this.skeletonHelper.visible = false;
     scene.add(this.skeletonHelper);
+    this.backOff = 0.13; this.backUp = 0.04; // надпись на спине: на сколько позади и выше кости груди, м
     this.ready = true;
     return this.info;
   }
@@ -246,6 +247,38 @@ export class PlayerRig {
       }
       o.material = mat; src.dispose();
     });
+  }
+
+  // Номер и имя на спине: полотно с надписью закреплено на кости груди чуть позади футболки
+  setBack(name, num) {
+    if (!this.ready) return;
+    const nm = String(name || '').toUpperCase().slice(0, 12), key = nm + '|' + num;
+    if (key === this._backKey) return;
+    this._backKey = key;
+    const c = this._backCv || (this._backCv = document.createElement('canvas'));
+    c.width = 256; c.height = 288;
+    const g = c.getContext('2d');
+    g.clearRect(0, 0, c.width, c.height); g.textAlign = 'center'; g.lineJoin = 'round'; g.fillStyle = '#ffffff'; g.strokeStyle = 'rgba(0,0,0,0.5)';
+    let fs = 42; const font = () => { g.font = '900 ' + fs + 'px "Arial Narrow", Arial, sans-serif'; };
+    font(); while (g.measureText(nm).width > 236 && fs > 18) { fs -= 2; font(); }
+    g.lineWidth = 5; g.strokeText(nm, 128, 54); g.fillText(nm, 128, 54);
+    g.font = '900 188px Impact, "Arial Black", sans-serif'; g.lineWidth = 8; g.strokeText(String(num), 128, 236); g.fillText(String(num), 128, 236);
+    if (!this._backMesh) {
+      const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.3825), new THREE.MeshBasicMaterial({ map: tex, color: 0xe8e8e8, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 }));
+      // положение задано в позе покоя и переведено в оси кости: дальше полотно ходит вместе с грудью
+      const bone = this.bones.Spine2, R = this.rest.Spine2, F0 = this.F0, sc = bone.getWorldScale(new THREE.Vector3());
+      const n = new THREE.Vector3().copy(F0).multiplyScalar(-1), x = new THREE.Vector3().crossVectors(UP, n).normalize();
+      const qd = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, UP, n));
+      const inv = R.q.clone().invert();
+      mesh.position.copy(n).multiplyScalar(this.backOff).addScaledVector(UP, this.backUp).applyQuaternion(inv).divide(sc);
+      mesh.quaternion.copy(inv).multiply(qd);
+      mesh.scale.set(1 / sc.x, 1 / sc.y, 1 / sc.z);
+      mesh.frustumCulled = false; mesh.renderOrder = 2;
+      bone.add(mesh);
+      this._backMesh = mesh;
+    }
+    this._backMesh.material.map.needsUpdate = true;
   }
 
   // Цвет формы: футболка и шорты — чистый цвет
@@ -815,7 +848,8 @@ export class PlayerRig {
     // в воздухе после удара кисть тянется к покрытию под плечом, с приземления стоит на месте, пока корпус на ней приподнимается
     const handFall = !!fl && !sideFall; // after the side volley the player lands on his feet: the arms balance, they do not go to the turf // после удара сбоку рука тянется к покрытию на посадке
     const handSlide = slT && sl > 0.15;
-    if (handFall || handSlide || this._armW) {
+    const handAim = !!aux.hand && aux.hand.w > 0.01 && !handFall && !handSlide; // рука тянется к заданной точке (рукопожатие)
+    if (handFall || handSlide || handAim || this._armW) {
       const aw = this._armW || (this._armW = [0, 0]), hT = this._handT || (this._handT = [new THREE.Vector3(), new THREE.Vector3()]);
       const S = [B.LeftArm.getWorldPosition(new THREE.Vector3()), B.RightArm.getWorldPosition(new THREE.Vector3())];
       const sp = B.Spine2.getWorldPosition(new THREE.Vector3()), chest = new THREE.Vector3().copy(f).applyQuaternion(bodyQ);
@@ -841,6 +875,7 @@ export class PlayerRig {
           wT = sm01(sl * 1.4);
           hT[i].set(S[i].x, ground + 0.05, S[i].z).addScaledVector(r, this._slSide * 0.2).addScaledVector(f, -0.1);
         }
+        if (handAim && i === aux.hand.i) { wT = aux.hand.w; hT[i].set(aux.hand.x, aux.hand.y, aux.hand.z); }
         const w = aw[i] = clamp(aw[i] + (wT - aw[i]) * (dt > 0 ? Math.min(1, 12 * dt) : 1), 0, 1);
         if (w < 0.01) continue;
         any = true;
@@ -850,6 +885,7 @@ export class PlayerRig {
         const d = clamp(to.length(), Math.abs(l1 - l2) + 0.03, (l1 + l2) * 0.985); to.normalize();
         // локоть смотрит назад от груди и наружу — как у руки, на которую опираются
         const pole = new THREE.Vector3().copy(chest).multiplyScalar(-0.7).addScaledVector(UP, 0.35).addScaledVector(v.set(S[i].x - sp.x, 0, S[i].z - sp.z), 1.2);
+        if (handAim && i === aux.hand.i) pole.set(0, -0.8, 0).addScaledVector(v.set(S[i].x - sp.x, 0, S[i].z - sp.z), 2.2).addScaledVector(chest, -0.2); // рукопожатие: локоть вниз и чуть наружу
         pole.addScaledVector(to, -pole.dot(to)); if (pole.lengthSq() < 1e-4) pole.set(0, 1, 0).addScaledVector(to, -to.y); pole.normalize();
         const ca = clamp((l1 * l1 + d * d - l2 * l2) / (2 * l1 * d), -1, 1);
         const elbow = new THREE.Vector3().copy(S[i]).addScaledVector(to, l1 * ca).addScaledVector(pole, l1 * Math.sqrt(1 - ca * ca));

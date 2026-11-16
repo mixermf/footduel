@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { World, unpackInput, emptyInput } from '../src/sim/world.js';
 import { createProfile } from '../src/sim/profile.js';
 import {
-  NET_VERSION, SNAP_EVERY, MAX_BUF, STARVE_TICKS, EDGE_BITS, COUNTDOWN_MS, RESUME_MS, REJOIN_MS, WIRE_EVENTS, sanitizeFrame,
+  NET_VERSION, SNAP_EVERY, MAX_BUF, STARVE_TICKS, EDGE_BITS, COUNTDOWN_MS, RESUME_MS, REJOIN_MS, WIRE_EVENTS, SHIRT_NUMBERS, sanitizeFrame,
 } from '../src/net/protocol.js';
 
 const MAX_QUEUE = 240, MAX_BATCH = 64, MAX_STEPS = 24, EMPTY_ROOM_MS = 60000;
@@ -36,7 +36,7 @@ export class Room {
     if (i < 0 || this.inMatch) return -1;
     this.slots[i] = {
       conn, name: cleanName(name, i ? 'Гость' : 'Хозяин'), token: randomBytes(12).toString('hex'),
-      connected: true, ready: false, rematch: false, queue: [], seq: 0, recv: 0, last: [0, 0, 1], starve: 0, hold: false,
+      num: 0, connected: true, ready: false, rematch: false, queue: [], seq: 0, recv: 0, last: [0, 0, 1], starve: 0, hold: false,
     };
     this._send(i, { t: 'joined', v: NET_VERSION, code: this.code, you: i, token: this.slots[i].token, hz: this.world.P.simHz });
     if (this.count === 2 && this.state === 'waiting') this.state = 'loading';
@@ -53,7 +53,7 @@ export class Room {
     s.seq = s.recv = Math.max(0, Number(seq) | 0);
     s.last = [0, 0, 1];
     this._send(i, { t: 'joined', v: NET_VERSION, code: this.code, you: i, token: s.token, hz: this.world.P.simHz });
-    if (this.state === 'paused' && this.slots.every((x) => x && x.connected)) this._countdown(RESUME_MS);
+    if (this.state === 'paused' && this.slots.every((x) => x && x.connected)) { this.intro = false; this._countdown(RESUME_MS); }
     else this._lobby();
     this._snapshot();
     return i;
@@ -134,7 +134,13 @@ export class Room {
     w.seed = this.fixedSeed || randomBytes(2).readUInt16LE(0) || 1; // fixedSeed — только для тестов: кто вводит мяч, зависит от seed
     w.reset('duel');
     for (const s of this.slots) { s.rematch = false; s.queue.length = 0; s.last = [0, 0, 1]; s.starve = 0; s.seq = s.recv; }
+    // номера на спине: разные у двух игроков, одни и те же на весь матч и реванши
+    if (!this.slots[0].num || !this.slots[1].num) {
+      const pool = [...SHIRT_NUMBERS];
+      for (const s of this.slots) s.num = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
+    }
     this.events.length = 0;
+    this.intro = true; // перед началом матча клиенты показывают сцену выхода
     this._countdown(COUNTDOWN_MS);
     this._snapshot();
   }
@@ -207,8 +213,8 @@ export class Room {
     const w = this.world;
     const base = {
       t: 'lobby', code: this.code, state: this.state, timer: Math.max(0, Math.round(this.timer)),
-      goals: w.goals, winner: w.winner, goalsToWin: w.P.match.goalsToWin,
-      players: this.slots.map((s) => (s ? { name: s.name, connected: s.connected, ready: s.ready, rematch: s.rematch } : null)),
+      goals: w.goals, winner: w.winner, goalsToWin: w.P.match.goalsToWin, intro: !!this.intro && this.state === 'countdown',
+      players: this.slots.map((s) => (s ? { name: s.name, num: s.num, connected: s.connected, ready: s.ready, rematch: s.rematch } : null)),
     };
     const str = JSON.stringify(base);
     for (const s of this.slots) if (s && s.connected) s.conn.send(str);

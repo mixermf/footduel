@@ -67,7 +67,8 @@ export class Lobby {
     switch (L.state) {
       case 'waiting': return { kind: 'room', code: L.code, players, text: 'Ждём соперника. Отправьте ему код или ссылку.', copied: now < this._copied };
       case 'loading': return { kind: 'room', code: L.code, players, text: 'Соперник в комнате. Загрузка…', copied: false };
-      case 'countdown': return { kind: 'count', n: Math.max(1, left), text: side, goalsToWin: L.goalsToWin };
+      case 'countdown': return { kind: 'count', n: Math.max(1, left), text: side, goalsToWin: L.goalsToWin,
+        vs: L.intro && left > 3 ? L.players.map((p) => (p ? `${p.name} · ${p.num || ''}` : '')).join('   —   ') : '' };
       case 'paused': return { kind: 'msg', title: 'Соперник отключился', text: `Матч на паузе. Ждём возвращения: ${left} с.` };
       case 'over': {
         const win = L.winner === s.me, mine = L.goals[s.me], theirs = L.goals[1 - s.me];
@@ -83,7 +84,7 @@ export class Lobby {
     const root = this.root;
     this.primary = null;
     root.replaceChildren();
-    root.className = v.kind === 'none' ? '' : 'open' + (v.kind === 'count' ? ' clear' : '');
+    root.className = v.kind === 'none' ? '' : 'open' + (v.kind === 'count' ? ' clear' : '') + (v.vs ? ' intro' : ''); // сцена выхода: без затемнения, имена — внизу кадра
     if (v.kind === 'none') return;
     const box = el('div', 'menu net');
     const btn = (label, fn, primary) => {
@@ -130,7 +131,8 @@ export class Lobby {
       }, true), btn('Выйти', () => this.h.leave()));
     } else if (v.kind === 'count') {
       box.classList.add('count');
-      box.append(el('div', 'net-count', String(v.n)), el('p', '', v.text), el('p', '', `Матч до ${v.goalsToWin} голов.`));
+      if (v.vs) box.append(el('p', 'net-vs', v.vs), el('p', '', `Матч до ${v.goalsToWin} голов.`));
+      else box.append(el('div', 'net-count', String(v.n)), el('p', '', v.text), el('p', '', `Матч до ${v.goalsToWin} голов.`));
     } else if (v.kind === 'over') {
       box.append(el('h1', '', v.title), el('div', 'net-code', v.score), el('p', '', v.note));
       if (v.canRematch) row.append(btn('Реванш', () => this.h.rematch(), true));

@@ -44,6 +44,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1420; col
 #net { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(6, 10, 16, 0.72); z-index: 19; }
 #net.open { display: flex; }
 #net.clear { background: rgba(6, 10, 16, 0.25); pointer-events: none; }
+#net.intro { background: transparent; align-items: flex-end; padding-bottom: 7vh; }
+.menu.net.count p.net-vs { font-size: 28px; font-weight: 800; letter-spacing: 0.04em; }
 .menu.net { width: min(440px, 92vw); text-align: center; }
 .menu.net.count { background: transparent; border-color: transparent; }
 .net-code { font-size: 44px; font-weight: 700; letter-spacing: 0.18em; margin: 6px 0 10px; color: var(--accent); font-variant-numeric: tabular-nums; user-select: all; }

@@ -487,8 +487,17 @@ export class GameScene {
   // лабораторные ракурсы следуют за игроком; игровой ракурс неподвижен
   updateCamera(px, pz, yaw, dt) {
     const cam = this.camera;
+    if (this.view === 'game' && this.cine) {
+      // постановочная сцена: своя точка съёмки, которая по out (0..1) переходит в игровой ракурс
+      const c = this.cine, k = c.out, t = this._camTarget, b = this._camBase;
+      cam.position.set(c.px + (b.x - c.px) * k, c.py + (b.y - c.py) * k, c.pz + (b.z - c.pz) * k);
+      cam.lookAt(c.lx + (t.x - c.lx) * k, c.ly + (t.y - c.ly) * k, c.lz + (t.z - c.lz) * k);
+      this._cineOn = true;
+      return;
+    }
     if (this.view === 'game') {
       cam.position.copy(this._camBase);
+      if (this._cineOn) { cam.lookAt(this._camTarget); this._cineOn = false; }
       if (this.shake > 0.001 && this.shakeEnabled) {
         cam.position.x += (Math.random() - 0.5) * this.shake; cam.position.y += (Math.random() - 0.5) * this.shake;
         this.shake *= Math.exp(-14 * dt);
