@@ -48,7 +48,10 @@ export class MatchIntro {
     // где кисть в рукопожатии относительно корня (среднее за время сцепки): вперёд и вправо, м
     const S = CLIPS.introShake; let fx = 0, fz = 0, n = 0;
     for (let t = INTRO.grip[0]; t <= INTRO.grip[1]; t += 0.05) { const p = rig.clipPoint(S, t, 'RightHand'); fx += p.x; fz += p.z; n++; }
-    this.reach = fx / n; this.side = fz / n;
+    // сходятся не запястья, а ладони: каждое запястье не доходит до точки сцепки на глубину ладони, поэтому и игроки
+    // стоят на столько же дальше; ладони прижаты друг к другу — запястья разнесены вбок на толщину кисти
+    this.palm = rig.palmOff || 0.075; this.thick = 0.014;
+    this.reach = fx / n + this.palm; this.side = fz / n;
     this.walkT = walked(99);
     this._simOn = false;
   }
@@ -96,7 +99,7 @@ export class MatchIntro {
         const L = this.layers[i]; L.length = 0;
         if (wWalk > 0.001) L.push({ clip: W, t: E + i * W.duration * 0.5, w: wWalk });
         if (wWalk < 0.999) L.push({ clip: S, t: tc, w: 1 - wWalk });
-        const h = this.hands[i]; h.w = hw; h.x = 0; h.y = hy; h.z = 0; // точка сцепки — над центром: середина между двумя кистями
+        const h = this.hands[i]; h.w = hw; h.x = sgn * this.palm; h.y = hy; h.z = -sgn * this.thick; h.palm = true; // точка сцепки — над центром поля
       }
       const k = sm(t / 2.2);
       c.px = 0.45 - 0.45 * k; c.py = 1.48 - 0.06 * k; c.pz = 4.4 - 1.2 * k; c.lx = 0; c.ly = 1.12; c.lz = 0; c.out = 0;

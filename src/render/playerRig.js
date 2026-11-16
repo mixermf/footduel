@@ -207,6 +207,7 @@ export class PlayerRig {
       const axisL = axisW.normalize().applyQuaternion(R[name].q.clone().invert());
       const ang = m[1] === 'Thumb' ? 0.18 : [0.42, 0.5, 0.38][Number(m[2]) - 1] * (m[1] === 'Pinky' ? 1.15 : m[1] === 'Index' ? 0.85 : 1);
       b.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(axisL, ang));
+      (this._fingers || (this._fingers = [])).push({ b, axisL, q0: b.quaternion.clone(), right: name.startsWith('Right'), thumb: m[1] === 'Thumb' });
       curled++;
     }
     this.info = {
@@ -219,6 +220,16 @@ export class PlayerRig {
     this.skeletonHelper.visible = false;
     scene.add(this.skeletonHelper);
     model.traverse((o) => { if (o.isSkinnedMesh && /^Tops/i.test(o.name) && !this._back) this._buildBack(o); });
+    // правая кисть в позе покоя: куда смотрят пальцы и ладонь (в T-позе ладонь вниз) — по ним кисть разворачивается в рукопожатии
+    if (B.RightHandMiddle1 && B.RightHandIndex1 && B.RightHandPinky1) {
+      const w = R.RightHand.p, d0 = R.RightHandMiddle1.p.clone().sub(w);
+      this.handLen = d0.length(); d0.normalize();
+      const p0 = new THREE.Vector3().crossVectors(R.RightHandIndex1.p.clone().sub(w), R.RightHandPinky1.p.clone().sub(w)).normalize();
+      if (p0.y > 0) p0.multiplyScalar(-1); // сторона ладони
+      p0.addScaledVector(d0, -p0.dot(d0)).normalize();
+      this._palmRest = new THREE.Matrix4().makeBasis(d0, p0, new THREE.Vector3().crossVectors(d0, p0));
+      this.palmOff = this.handLen * 0.6; // от запястья до середины ладони
+    }
     this.ready = true;
     return this.info;
   }
@@ -333,7 +344,8 @@ export class PlayerRig {
       setWorldQuat(B[name], _q.copy(yawQ).multiply(P.get(name)).multiply(R[name].q));
       if (name === 'Hips') B.Hips.position.copy(B.Hips.parent.worldToLocal(hp));
     }
-    if (opt.hand && opt.hand.w > 0.001) this._reach(opt.hand.i, opt.hand, opt.hand.w, f);
+    if (opt.hand && opt.hand.w > 0.001) this._reach(opt.hand.i, opt.hand, opt.hand.w, f, r);
+    this._grip(opt.hand && opt.hand.palm ? opt.hand.w : 0);
     if (!this._clipMode) { this._clipMode = true; this._armW = null; }
   }
 
@@ -354,8 +366,16 @@ export class PlayerRig {
     return out;
   }
 
-  // Двухзвенный IK руки: кисть — в точку target с весом w; локоть смотрит вниз и наружу
-  _reach(i, target, w, f) {
+  // Сжать правую кисть: k = 0 — расслаблена, 1 — пальцы обхватывают чужую ладонь
+  _grip(k) {
+    if (!this._fingers || k === this._gripK) return;
+    this._gripK = k;
+    for (const F of this._fingers) if (F.right) F.b.quaternion.copy(F.q0).multiply(_q.setFromAxisAngle(F.axisL, (F.thumb ? 0.22 : 0.42) * k));
+  }
+
+  // Двухзвенный IK руки: запястье — в точку target с весом w. target.palm — рукопожатие: кисть разворачивается пальцами
+  // вперёд по корпусу, ладонью влево (к ладони соперника), большим пальцем вверх
+  _reach(i, target, w, f, r) {
     const B = this.bones, n = i ? ['RightArm', 'RightForeArm', 'RightHand'] : ['LeftArm', 'LeftForeArm', 'LeftHand'];
     const S = B[n[0]].getWorldPosition(new THREE.Vector3()), E = B[n[1]].getWorldPosition(new THREE.Vector3()), Hd = B[n[2]].getWorldPosition(new THREE.Vector3());
     const sp = B.Spine2.getWorldPosition(new THREE.Vector3());
@@ -377,6 +397,13 @@ export class PlayerRig {
     aim(B[n[0]], S, E, elbow);
     const E2 = B[n[1]].getWorldPosition(new THREE.Vector3()), H2 = B[n[2]].getWorldPosition(new THREE.Vector3());
     aim(B[n[1]], E2, H2, hand);
+    if (target.palm && this._palmRest && i === 1) {
+      const d = _x.copy(f).normalize(), p = _z.copy(r).multiplyScalar(-1);
+      const des = _m.makeBasis(d, p, new THREE.Vector3().crossVectors(d, p));
+      const q = new THREE.Quaternion().setFromRotationMatrix(des.multiply(new THREE.Matrix4().copy(this._palmRest).invert())).multiply(this.rest.RightHand.q);
+      const wq = B.RightHand.getWorldQuaternion(new THREE.Quaternion());
+      setWorldQuat(B.RightHand, wq.slerp(q, w));
+    }
   }
 
   // Цвет формы: футболка и шорты — чистый цвет
@@ -478,7 +505,7 @@ export class PlayerRig {
   update(s, aux, dt) {
     if (!this.ready) return;
     // после полного клипа (сцена выхода) вторичное движение начинается с чистого листа: пружины не тянут позу из клипа
-    if (this._clipMode) { this._clipMode = false; this.sp = {}; this._armW = null; for (const L of this.legs) { L.pole = null; L.pitch = 0; } }
+    if (this._clipMode) { this._clipMode = false; this.sp = {}; this._armW = null; this._grip(0); for (const L of this.legs) { L.pole = null; L.pitch = 0; } }
     const B = this.bones, R = this.rest;
     this.t += dt;
     const th = s.yaw;
