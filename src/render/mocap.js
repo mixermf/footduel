@@ -17,7 +17,12 @@ import packGuard from '../../assets/mocap/pack-guard.json';
 import packJuggle from '../../assets/mocap/pack-juggle.json';
 import packCelebrate from '../../assets/mocap/pack-celebrate.json';
 
-export const CLIPS = { idle, jogForward, jogBackward, jogLeft, jogRight, kick, strikeJog, receive, packKickSide, packKickPower, packGuard, packJuggle, packCelebrate };
+// клипы сцены выхода перед матчем (Mixamo, импорт scripts/convert-intro.mjs): две походки и рукопожатие
+import introWalk from '../../assets/mocap/intro-walk.json';
+import introStrut from '../../assets/mocap/intro-strut.json';
+import introShake from '../../assets/mocap/intro-shake.json';
+
+export const CLIPS = { idle, jogForward, jogBackward, jogLeft, jogRight, kick, strikeJog, receive, packKickSide, packKickPower, packGuard, packJuggle, packCelebrate, introWalk, introStrut, introShake };
 export const BONES = idle.bones;
 const INDEX = Object.fromEntries(BONES.map((b, i) => [b, i]));
 // зеркальная пара кости (для удара другой ногой)

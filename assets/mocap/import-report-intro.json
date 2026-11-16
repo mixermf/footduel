@@ -1,0 +1,44 @@
+[
+ {
+  "name": "intro-walk",
+  "file": "Walking.fbx",
+  "sec": 1.4,
+  "frames": 42,
+  "hipTravel": 0.0073,
+  "driftPerSec": 0.0053,
+  "stancePerSec": 0.9335,
+  "speed": 0.9335,
+  "hipY": "0.9329..0.9871",
+  "strikes": "{\"L\":[0.2143],\"R\":[0.7381]}",
+  "hand": "-",
+  "kb": 25
+ },
+ {
+  "name": "intro-strut",
+  "file": "Strut Walking.fbx",
+  "sec": 1.4333,
+  "frames": 43,
+  "hipTravel": 0.0062,
+  "driftPerSec": 0.0044,
+  "stancePerSec": 0.7827,
+  "speed": 0.7827,
+  "hipY": "0.9388..0.9885",
+  "strikes": "{\"L\":[0.0465],\"R\":[0.5581]}",
+  "hand": "-",
+  "kb": 26
+ },
+ {
+  "name": "intro-shake",
+  "file": "Shaking Hands 2.fbx",
+  "sec": 4.3667,
+  "frames": 132,
+  "hipTravel": 0,
+  "driftPerSec": 0,
+  "stancePerSec": 0.0797,
+  "speed": "-",
+  "hipY": "0.96..0.9911",
+  "strikes": "{\"L\":[0.5909],\"R\":[0.2348,0.7803]}",
+  "hand": "{\"peak\":1.3,\"from\":1.0333,\"to\":1.4667,\"fwd\":0.4503,\"y\":1.0055,\"side\":-0.0873}",
+  "kb": 77
+ }
+]

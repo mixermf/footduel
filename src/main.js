@@ -264,10 +264,11 @@ let intro = null, introWas = false; const introV = [{}, {}]; // сцена вы�
 // Лаборатория: показать кадр сцены выхода без сервера — introPreview(t), t в секундах от начала; introPreview(-1) — выключить
 game.introPreview = (t, dt = 1 / 60) => {
   if (t < 0) { scene.cine = null; rig2.root.visible = game.mode === 'online'; game.introFrame = null; return null; }
-  if (!intro) intro = new MatchIntro();
-  const fr = intro.frame(t);
+  if (!intro) intro = new MatchIntro(rig);
+  const fr = intro.frame(t, game.introPick || [0, 1]);
   rig2.root.visible = true; rig2.setBack('Гость', 9);
-  rig.update(fr.v[0], fr.aux[0], dt); rig2.update(fr.v[1], fr.aux[1], dt);
+  if (fr.clip) { rig.updateClip(fr.roots[0], fr.layers[0], { hand: fr.hands[0] }); rig2.updateClip(fr.roots[1], fr.layers[1], { hand: fr.hands[1] }); }
+  else { rig.update(fr.v[0], fr.aux[0], dt); rig2.update(fr.v[1], fr.aux[1], dt); }
   scene.cine = fr.cam; scene.updateCamera(0, 0, 0, dt); scene.render(dt);
   game.introFrame = fr;
   return fr;
@@ -493,12 +494,18 @@ function runFrame(now) {
   if (L && L.players[0]) rig.setBack(L.players[0].name, L.players[0].num || 10);
   if (L && L.players[1]) rig2.setBack(L.players[1].name, L.players[1].num || 9);
   if (introOn) {
-    if (!intro) intro = new MatchIntro();
+    if (!intro) intro = new MatchIntro(rig);
     const total = COUNTDOWN_MS / 1000, t = total - Math.max(0, L.timer - (now - sess.lobbyAt)) / 1000;
     if (!introWas) intro.reset();
-    const fr = intro.frame(t), k = Math.max(0, Math.min(1, (t - (total - INTRO.blend)) / (INTRO.blend - 0.05))), kk = k * k * (3 - 2 * k);
-    rig.update(kk > 0 ? blendView(introV[0], fr.v[0], view, kk) : fr.v[0], fr.aux[0], dtReal);
-    rig2.update(kk > 0 ? blendView(introV[1], fr.v[1], view.p2, kk) : fr.v[1], fr.aux[1], dtReal);
+    // походка у каждого своя — по номеру на спине: у обоих клиентов выбор одинаковый
+    const fr = intro.frame(t, [L.players[0]?.num || 0, (L.players[1]?.num || 0) + 1]);
+    if (fr.clip) {
+      rig.updateClip(fr.roots[0], fr.layers[0], { hand: fr.hands[0] }); rig2.updateClip(fr.roots[1], fr.layers[1], { hand: fr.hands[1] });
+    } else {
+      const k = Math.max(0, Math.min(1, (t - (total - INTRO.blend)) / (INTRO.blend - 0.05))), kk = k * k * (3 - 2 * k);
+      rig.update(kk > 0 ? blendView(introV[0], fr.v[0], view, kk) : fr.v[0], fr.aux[0], dtReal);
+      rig2.update(kk > 0 ? blendView(introV[1], fr.v[1], view.p2, kk) : fr.v[1], fr.aux[1], dtReal);
+    }
     scene.cine = fr.cam;
   } else {
     scene.cine = null;

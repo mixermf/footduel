@@ -4,7 +4,12 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import modelUrl from '../../assets/player/player.glb?url';
-import { CLIPS, PoseBlend, strikePhase, UPPER_BODY, clipFoot } from './mocap.js';
+import { CLIPS, PoseBlend, strikePhase, UPPER_BODY, clipFoot, BONES } from './mocap.js';
+
+// порядок костей для полного клипа: родители раньше детей
+const CLIP_ORDER = ['Hips', 'Spine', 'Spine1', 'Spine2', 'Neck', 'Head', 'LeftShoulder', 'LeftArm', 'LeftForeArm', 'LeftHand',
+  'RightShoulder', 'RightArm', 'RightForeArm', 'RightHand', 'LeftUpLeg', 'LeftLeg', 'LeftFoot', 'RightUpLeg', 'RightLeg', 'RightFoot'];
+const BONE_SET = new Set(BONES);
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion();
@@ -213,7 +218,7 @@ export class PlayerRig {
     this.skeletonHelper = new THREE.SkeletonHelper(model);
     this.skeletonHelper.visible = false;
     scene.add(this.skeletonHelper);
-    this.backOff = 0.13; this.backUp = 0.04; // надпись на спине: на сколько позади и выше кости груди, м
+    model.traverse((o) => { if (o.isSkinnedMesh && /^Tops/i.test(o.name) && !this._back) this._buildBack(o); });
     this.ready = true;
     return this.info;
   }
@@ -249,36 +254,129 @@ export class PlayerRig {
     });
   }
 
-  // Номер и имя на спине: полотно с надписью закреплено на кости груди чуть позади футболки
+  // Номер и имя на спине. Надпись не висит отдельной табличкой, а спроецирована на футболку: это копия треугольников спины
+  // (собирается при загрузке, _buildBack) с теми же костями и весами, поэтому она лежит на ткани и гнётся вместе с ней.
   setBack(name, num) {
-    if (!this.ready) return;
+    if (!this.ready || !this._back) return;
     const nm = String(name || '').toUpperCase().slice(0, 12), key = nm + '|' + num;
     if (key === this._backKey) return;
     this._backKey = key;
-    const c = this._backCv || (this._backCv = document.createElement('canvas'));
-    c.width = 256; c.height = 288;
-    const g = c.getContext('2d');
-    g.clearRect(0, 0, c.width, c.height); g.textAlign = 'center'; g.lineJoin = 'round'; g.fillStyle = '#ffffff'; g.strokeStyle = 'rgba(0,0,0,0.5)';
-    let fs = 42; const font = () => { g.font = '900 ' + fs + 'px "Arial Narrow", Arial, sans-serif'; };
-    font(); while (g.measureText(nm).width > 236 && fs > 18) { fs -= 2; font(); }
-    g.lineWidth = 5; g.strokeText(nm, 128, 54); g.fillText(nm, 128, 54);
-    g.font = '900 188px Impact, "Arial Black", sans-serif'; g.lineWidth = 8; g.strokeText(String(num), 128, 236); g.fillText(String(num), 128, 236);
-    if (!this._backMesh) {
-      const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.3825), new THREE.MeshBasicMaterial({ map: tex, color: 0xe8e8e8, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 }));
-      // положение задано в позе покоя и переведено в оси кости: дальше полотно ходит вместе с грудью
-      const bone = this.bones.Spine2, R = this.rest.Spine2, F0 = this.F0, sc = bone.getWorldScale(new THREE.Vector3());
-      const n = new THREE.Vector3().copy(F0).multiplyScalar(-1), x = new THREE.Vector3().crossVectors(UP, n).normalize();
-      const qd = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, UP, n));
-      const inv = R.q.clone().invert();
-      mesh.position.copy(n).multiplyScalar(this.backOff).addScaledVector(UP, this.backUp).applyQuaternion(inv).divide(sc);
-      mesh.quaternion.copy(inv).multiply(qd);
-      mesh.scale.set(1 / sc.x, 1 / sc.y, 1 / sc.z);
-      mesh.frustumCulled = false; mesh.renderOrder = 2;
-      bone.add(mesh);
-      this._backMesh = mesh;
+    const c = this._back.canvas, g = c.getContext('2d');
+    g.clearRect(0, 0, c.width, c.height); g.textAlign = 'center'; g.lineJoin = 'round'; g.fillStyle = '#ffffff'; g.strokeStyle = 'rgba(0,0,0,0.45)';
+    let fs = 44; const font = () => { g.font = '900 ' + fs + 'px "Arial Narrow", Arial, sans-serif'; };
+    font(); while (g.measureText(nm).width > 216 && fs > 18) { fs -= 2; font(); }
+    g.lineWidth = 5; g.strokeText(nm, 128, 62); g.fillText(nm, 128, 62);
+    g.font = '900 176px Impact, "Arial Black", sans-serif'; g.lineWidth = 8; g.strokeText(String(num), 128, 232); g.fillText(String(num), 128, 232);
+    this._back.tex.needsUpdate = true;
+  }
+
+  // Полотно надписи: треугольники футболки, которые смотрят назад и попадают в прямоугольник проекции на спине.
+  // Вызывается при загрузке, пока скелет стоит в исходной позе: по ней считается, куда попадает каждая вершина.
+  _buildBack(tops) {
+    const R = this.rest.Spine2, F0 = this.F0, W = 0.36, H = 0.4;
+    const n = new THREE.Vector3().copy(F0).multiplyScalar(-1), ax = new THREE.Vector3().crossVectors(UP, n).normalize();
+    const C = R.p.clone().addScaledVector(UP, 0.035);
+    const g0 = tops.geometry, pos = g0.attributes.position, idx = g0.index, si = g0.attributes.skinIndex, sw = g0.attributes.skinWeight, nr = g0.attributes.normal;
+    const wp = [], v = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) { tops.getVertexPosition(i, v); wp.push(v.applyMatrix4(tops.matrixWorld).clone()); }
+    const P = [], N = [], UV = [], SI = [], SW = [], map = new Map(), I = [];
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), fn = new THREE.Vector3();
+    const tri = idx ? idx.count / 3 : pos.count / 3, at = (k) => (idx ? idx.getX(k) : k);
+    const uvOf = (p) => [p.clone().sub(C).dot(ax) / W + 0.5, p.clone().sub(C).dot(UP) / H + 0.5];
+    for (let t = 0; t < tri; t++) {
+      const i0 = at(t * 3), i1 = at(t * 3 + 1), i2 = at(t * 3 + 2), p0 = wp[i0], p1 = wp[i1], p2 = wp[i2];
+      fn.crossVectors(a.subVectors(p1, p0), b.subVectors(p2, p0)).normalize();
+      if (fn.dot(n) < 0.25) continue; // смотрит не назад
+      if (p0.clone().sub(C).dot(n) < 0.02) continue; // не на спине (грудь, рукав спереди)
+      const uvs = [uvOf(p0), uvOf(p1), uvOf(p2)];
+      if (uvs.every((u) => u[0] < 0 || u[0] > 1 || u[1] < 0 || u[1] > 1)) continue; // целиком вне надписи
+      [i0, i1, i2].forEach((vi, k) => {
+        let j = map.get(vi);
+        if (j === undefined) {
+          j = P.length / 3; map.set(vi, j);
+          P.push(pos.getX(vi), pos.getY(vi), pos.getZ(vi)); N.push(nr.getX(vi), nr.getY(vi), nr.getZ(vi)); UV.push(uvs[k][0], uvs[k][1]);
+          SI.push(si.getX(vi), si.getY(vi), si.getZ(vi), si.getW(vi)); SW.push(sw.getX(vi), sw.getY(vi), sw.getZ(vi), sw.getW(vi));
+        }
+        I.push(j);
+      });
     }
-    this._backMesh.material.map.needsUpdate = true;
+    if (!I.length) return;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); geo.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(UV, 2));
+    geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(SI, 4)); geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(SW, 4));
+    geo.setIndex(I);
+    const canvas = document.createElement('canvas'); canvas.width = 256; canvas.height = 288;
+    const tex = new THREE.CanvasTexture(canvas); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+    // вне прямоугольника надписи текстура прозрачна: край полотна не виден
+    const mat = new THREE.MeshToonMaterial({ map: tex, gradientMap: tops.material.gradientMap, color: 0xffffff, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    const mesh = new THREE.SkinnedMesh(geo, mat);
+    mesh.name = 'BackPrint'; mesh.frustumCulled = false; mesh.renderOrder = 2;
+    mesh.position.copy(tops.position); mesh.quaternion.copy(tops.quaternion); mesh.scale.copy(tops.scale);
+    tops.parent.add(mesh); mesh.updateMatrixWorld(true);
+    mesh.bind(tops.skeleton, tops.bindMatrix);
+    this._back = { mesh, tex, canvas, tris: I.length / 3 };
+  }
+
+  // ---------- полный клип без симуляции: все кости — из motion capture, корень двигает постановка (сцена выхода)
+  // root — { x, z, yaw }; layers — [{ clip, t, w, mirror }]; opt.hand — { i, x, y, z, w }: кисть дотягивается до точки (IK)
+  updateClip(root, layers, opt = {}) {
+    if (!this.ready) return;
+    const B = this.bones, R = this.rest, P = this.pose;
+    P.reset();
+    for (const l of layers) P.add(l.clip, l.t, l.w, !!l.mirror);
+    P.finish();
+    const th = root.yaw, f = new THREE.Vector3(Math.cos(th), 0, Math.sin(th)), r = new THREE.Vector3(-f.z, 0, f.x);
+    const yawQ = this._yawQuat(th, new THREE.Quaternion()), H = this.hipRestY;
+    const hp = new THREE.Vector3(root.x, P.hips.y * H, root.z).addScaledVector(r, -P.hips.x * H).addScaledVector(f, P.hips.z * H);
+    for (const name of CLIP_ORDER) {
+      setWorldQuat(B[name], _q.copy(yawQ).multiply(P.get(name)).multiply(R[name].q));
+      if (name === 'Hips') B.Hips.position.copy(B.Hips.parent.worldToLocal(hp));
+    }
+    if (opt.hand && opt.hand.w > 0.001) this._reach(opt.hand.i, opt.hand, opt.hand.w, f);
+    if (!this._clipMode) { this._clipMode = true; this._armW = null; }
+  }
+
+  // Положение кости в клипе относительно корня при взгляде вдоль +X (вперёд — x, вправо — z): по нему сцена расставляет
+  // игроков так, чтобы кисти в рукопожатии сошлись. Считается по цепочке костей, скелет при этом не трогается.
+  clipPoint(clip, t, bone, out = new THREE.Vector3()) {
+    const P = this._probe || (this._probe = new PoseBlend()), R = this.rest, H = this.hipRestY;
+    P.reset(); P.add(clip, t, 1); P.finish();
+    const yawQ = this._yawQuat(0, new THREE.Quaternion()), chain = [];
+    for (let b = this.bones[bone]; b && b !== this.bones.Hips; b = b.parent) chain.unshift(b.name.replace(/^mixamorig:?/, ''));
+    out.set(P.hips.z * H, P.hips.y * H, -P.hips.x * H);
+    // поворот кости в клипе задан относительно позы покоя: звено «родитель — ребёнок» из покоя поворачивается поворотом родителя
+    let prev = 'Hips', rot = 'Hips';
+    for (const name of chain) {
+      out.add(_x.subVectors(R[name].p, R[prev].p).applyQuaternion(_q.copy(yawQ).multiply(P.get(rot))));
+      prev = name; if (BONE_SET.has(name)) rot = name;
+    }
+    return out;
+  }
+
+  // Двухзвенный IK руки: кисть — в точку target с весом w; локоть смотрит вниз и наружу
+  _reach(i, target, w, f) {
+    const B = this.bones, n = i ? ['RightArm', 'RightForeArm', 'RightHand'] : ['LeftArm', 'LeftForeArm', 'LeftHand'];
+    const S = B[n[0]].getWorldPosition(new THREE.Vector3()), E = B[n[1]].getWorldPosition(new THREE.Vector3()), Hd = B[n[2]].getWorldPosition(new THREE.Vector3());
+    const sp = B.Spine2.getWorldPosition(new THREE.Vector3());
+    const l1 = E.distanceTo(S), l2 = Hd.distanceTo(E);
+    const to = new THREE.Vector3(target.x - S.x, target.y - S.y, target.z - S.z);
+    const d = clamp(to.length(), Math.abs(l1 - l2) + 0.03, (l1 + l2) * 0.985); to.normalize();
+    // подсказка локтю — как он стоит в самом клипе: IK только доводит кисть, а не перекладывает руку
+    const pole = new THREE.Vector3().subVectors(E, S).addScaledVector(to, -new THREE.Vector3().subVectors(E, S).dot(to));
+    if (pole.lengthSq() < 1e-5) pole.set(0, -1, 0).addScaledVector(new THREE.Vector3(S.x - sp.x, 0, S.z - sp.z), 2).addScaledVector(to, 0);
+    pole.addScaledVector(to, -pole.dot(to)).normalize();
+    const ca = clamp((l1 * l1 + d * d - l2 * l2) / (2 * l1 * d), -1, 1);
+    const elbow = new THREE.Vector3().copy(S).addScaledVector(to, l1 * ca).addScaledVector(pole, l1 * Math.sqrt(1 - ca * ca));
+    const hand = new THREE.Vector3().copy(S).addScaledVector(to, d);
+    const aim = (bone, from, cur, des) => {
+      const a = new THREE.Vector3().subVectors(cur, from).normalize(), b2 = new THREE.Vector3().subVectors(des, from).normalize();
+      const wq = bone.getWorldQuaternion(new THREE.Quaternion());
+      setWorldQuat(bone, new THREE.Quaternion().setFromUnitVectors(a, b2).multiply(wq).slerp(wq, 1 - w).normalize());
+    };
+    aim(B[n[0]], S, E, elbow);
+    const E2 = B[n[1]].getWorldPosition(new THREE.Vector3()), H2 = B[n[2]].getWorldPosition(new THREE.Vector3());
+    aim(B[n[1]], E2, H2, hand);
   }
 
   // Цвет формы: футболка и шорты — чистый цвет
@@ -379,6 +477,8 @@ export class PlayerRig {
   // s — интерполированный снимок симуляции; aux — { ball:{x,y,z}, kick, gesture }
   update(s, aux, dt) {
     if (!this.ready) return;
+    // после полного клипа (сцена выхода) вторичное движение начинается с чистого листа: пружины не тянут позу из клипа
+    if (this._clipMode) { this._clipMode = false; this.sp = {}; this._armW = null; for (const L of this.legs) { L.pole = null; L.pitch = 0; } }
     const B = this.bones, R = this.rest;
     this.t += dt;
     const th = s.yaw;

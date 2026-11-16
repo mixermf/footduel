@@ -68,7 +68,7 @@ export class Lobby {
       case 'waiting': return { kind: 'room', code: L.code, players, text: 'Ждём соперника. Отправьте ему код или ссылку.', copied: now < this._copied };
       case 'loading': return { kind: 'room', code: L.code, players, text: 'Соперник в комнате. Загрузка…', copied: false };
       case 'countdown': return { kind: 'count', n: Math.max(1, left), text: side, goalsToWin: L.goalsToWin,
-        vs: L.intro && left > 3 ? L.players.map((p) => (p ? `${p.name} · ${p.num || ''}` : '')).join('   —   ') : '' };
+        vs: L.intro && left > 2 ? L.players.map((p) => (p ? `${p.name} · ${p.num || ''}` : '')).join('   —   ') : '' };
       case 'paused': return { kind: 'msg', title: 'Соперник отключился', text: `Матч на паузе. Ждём возвращения: ${left} с.` };
       case 'over': {
         const win = L.winner === s.me, mine = L.goals[s.me], theirs = L.goals[1 - s.me];
