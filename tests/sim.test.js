@@ -518,10 +518,13 @@ test('чеканка: подброс, повторный прыжок — сер
   const w = new World(createProfile(), { seed: 7 });
   w.reset('free');
   const p = w.player, b = w.ball;
-  let touches = 0, kick = null, maxD = 0, started = false;
-  for (let i = 0; i < 780; i++) {
+  let touches = 0, kick = null, maxD = 0, started = false, pressAt = -1;
+  for (let i = 0; i < 840; i++) {
     const t = i / 120;
-    w.step(inp({ jumpPressed: i === 10 || i === 60, mz: t > 2.5 && t < 4.5 ? 1 : 0, kickHeld: t > 6 && t < 6.3, kickPressed: i === 721 }));
+    // удар нажимается сразу после подбива, пока мяч идёт вверх: нога встречает его у верхней точки — это удар с лёта
+    const press = pressAt < 0 && t > 6 && !!p.juggle && b.vy > 0 && b.y > 0.3 && b.y < 0.5;
+    if (press) pressAt = i;
+    w.step(inp({ jumpPressed: i === 10 || i === 60, mz: t > 2.5 && t < 4.5 ? 1 : 0, kickHeld: pressAt >= 0 && i < pressAt + 36, kickPressed: press }));
     for (const e of w.events) {
       if (e.type === 'juggle_start') started = true;
       if (e.type === 'touch' && e.kind === 'juggle') touches++;
@@ -532,7 +535,7 @@ test('чеканка: подброс, повторный прыжок — сер
     if (t > 1 && t < 6) assert.ok(p.juggle, 'серия не прерывается сама, t=' + t.toFixed(2));
   }
   assert.ok(started);
-  assert.ok(touches >= 8, 'касаний в серии: ' + touches);
+  assert.ok(touches >= 7, 'касаний в серии: ' + touches); // низкий подбив: мяч падает до стопы чуть дольше, касаний за то же время на одно меньше
   assert.ok(maxD < 0.9, 'мяч остаётся у ног: ' + maxD.toFixed(2));
   assert.ok(p.z > 0.5, 'игрок прошёл с мячом в воздухе: ' + p.z.toFixed(2));
   assert.ok(kick && kick.volley && kick.firstTime, 'из чеканки удар идёт с лёта');

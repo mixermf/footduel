@@ -1081,7 +1081,10 @@ export class World {
     const wide = p.guard || p.lunge || (p.y > 0 && p.airWide); // a jump out of the stance keeps the feet apart: no slide on landing
     // sideways across the body (coming under a strike): a side step with the feet apart, otherwise they meet on one line
     const latK = !wide && p.kick && speed > 0.3 ? clamp((Math.abs(p.vx * rx + p.vz * rz) / speed - 0.35) / 0.4, 0, 1) : 0;
-    const spread = PP.footSpread * (wide ? P.guard.spread : 1 + (P.guard.spread - 1) * latK);
+    // side shuffle in the stance: the feet never pass each other — the leading foot steps out, the trailing one closes up.
+    // For that the stance gets wider and the steps shorter and quicker (see the gait parameters below)
+    const latV = Math.abs(p.vx * rx + p.vz * rz), latW = wide && p.y <= 0 && speed > 0.3 ? clamp((latV / speed - 0.35) / 0.4, 0, 1) : 0;
+    const spread = PP.footSpread * (wide ? P.guard.spread * (1 + P.guard.sideWide * latW) : 1 + (P.guard.spread - 1) * latK);
 
     if (p.y > 0) {
       for (const f of feet) {
@@ -1115,7 +1118,13 @@ export class World {
 
     const moving = speed > 0.3;
     const back = speed > 0.3 ? clamp((-(p.vx * fx + p.vz * fz) / speed - 0.3) / 0.5, 0, 1) : 0; // движение спиной вперёд
-    const { T, D, lift, lead: leadK, far, pw } = this._gaitParams(speed, p.possession, back);
+    const gp = this._gaitParams(speed, p.possession, back), { lead: leadK, far, pw } = gp;
+    let { T, D, lift } = gp;
+    if (latW > 0) {
+      // the gap between the feet swings by about 0.93 of the path covered in one cycle: the cycle is cut so that it swings by sideSwing
+      const G = P.guard, Ts = clamp(G.sideSwing / (1.86 * Math.max(latV, 0.5)), G.sideStepMin, T);
+      T += (Ts - T) * latW; D += (G.sideDuty - D) * latW; lift += (G.sideLift - lift) * latW;
+    }
     const cycle = 2 * T, contact = D * cycle;
     const kicking = p.kick && (p.kick.phase === 'windup' || p.kick.phase === 'swing');
     const special = (f) => f.ctl || (f.swing && !f.swing.gait); // нога занята ударом или внеочередным шагом
@@ -1707,6 +1716,18 @@ export class World {
     b.vx = Math.cos(yaw) * cp * speed + p.vx * carry;
     b.vz = Math.sin(yaw) * cp * speed + p.vz * carry;
     b.vy = Math.sin(pitch) * speed;
+    if (!lob) {
+      // Spin from the contact. The foot meets the ball below its centre the more, the higher the shot goes: backspin grows
+      // with the launch angle (a driven low shot keeps a little, a volley hit downwards gets topspin). Sidespin comes from
+      // the foot crossing the line of the shot — the player running across the ball slices it — and from the inside of
+      // the foot on a soft, placed shot. The curl the player adds after the contact still replaces the sidespin.
+      const S = K.spin, sy = Math.sin(yaw), cy = Math.cos(yaw), q = sup ? S.superShare : 1;
+      const back = speed * (S.base + S.lift * Math.sin(pitch)) * q; // > 0 — backspin, < 0 — topspin
+      const across = -p.vx * sy + p.vz * cy; // the player's speed across the line of the shot, to his right
+      const side = (S.across * across + S.inside * k.footSide * (1 - k.charge) * speed) * q;
+      b.wx = -sy * back; b.wz = cy * back; b.wy = side;
+      const wl = Math.hypot(b.wx, b.wy, b.wz); if (wl > S.max) { const m = S.max / wl; b.wx *= m; b.wy *= m; b.wz *= m; }
+    }
     if (b.y <= P.ball.radius + 1e-3 && b.vy > 0) b.y = P.ball.radius + 2e-4;
     p.lastTouchTick = this.tick; p.lastKickTick = this.tick;
     k.phase = 'curl'; k.t = 0;

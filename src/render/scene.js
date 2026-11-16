@@ -18,6 +18,9 @@ function gridTexture(color, line = 3, cell = 32) {
   return t;
 }
 
+// псевдослучайные числа с зерном: двор и роспись одинаковы от запуска к запуску
+function rng(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
+
 export class GameScene {
   constructor(canvas, profile) {
     this.P = profile;
@@ -30,17 +33,18 @@ export class GameScene {
     this.renderer.toneMappingExposure = 1.05;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0d1420);
-    this.scene.fog = new THREE.Fog(0x0d1420, 40, 90);
+    // дневное небо: от синего в зените к светлой дымке у горизонта
+    this.scene.background = canvasTexture(4, 256, (g, w, h) => { const gr = g.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, '#2f7fdc'); gr.addColorStop(0.6, '#8cc4f4'); gr.addColorStop(1, '#dff0ff'); g.fillStyle = gr; g.fillRect(0, 0, w, h); });
+    this.scene.fog = new THREE.Fog(0xcfe4f7, 70, 170);
 
     this.camera = new THREE.PerspectiveCamera(34, 16 / 9, 0.5, 200);
     this.view = 'game';
     this.shake = 0; this.shakeEnabled = true;
     this._camTarget = new THREE.Vector3(0, 0.4, -0.9);
 
-    const hemi = new THREE.HemisphereLight(0xcfe3ff, 0x25402c, 1.1);
+    const hemi = new THREE.HemisphereLight(0xdcefff, 0x6f7a62, 1.25);
     this.scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xfff2dc, 2.4);
+    const sun = new THREE.DirectionalLight(0xfff1d6, 2.7);
     sun.position.set(-7, 16, 9);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
@@ -58,131 +62,288 @@ export class GameScene {
   }
 
   _buildField(F) {
-    const L = F.length, W = F.width, gw = F.goalWidth, gh = F.goalHeight;
-    const s = this.scene;
-    // окружение
-    const apron = new THREE.Mesh(new THREE.PlaneGeometry(80, 60), new THREE.MeshStandardMaterial({ color: 0x18202c, roughness: 1 }));
+    this._buildTurf(F);
+    this._buildCage(F);
+    this._buildGoals(F);
+    this._buildStreet(F);
+  }
+
+  // Покрытие: яркий стилизованный газон с контрастными полосами и чёткой белой разметкой; вокруг — асфальт двора
+  _buildTurf(F) {
+    const L = F.length, W = F.width, gw = F.goalWidth, s = this.scene;
+    const asphalt = canvasTexture(512, 512, (g, w, h) => {
+      g.fillStyle = '#2f3237'; g.fillRect(0, 0, w, h);
+      const r = rng(11);
+      for (let i = 0; i < 9000; i++) { g.fillStyle = r() < 0.5 ? 'rgba(255,255,255,0.025)' : 'rgba(0,0,0,0.06)'; g.fillRect(r() * w, r() * h, 1 + r() * 2, 1 + r() * 2); }
+      for (let i = 0; i < 7; i++) { g.fillStyle = r() < 0.5 ? 'rgba(20,21,24,0.14)' : 'rgba(90,92,96,0.08)'; g.beginPath(); g.ellipse(r() * w, r() * h, 30 + r() * 70, 18 + r() * 40, r() * 3, 0, 7); g.fill(); }
+      g.strokeStyle = 'rgba(15,16,19,0.35)'; g.lineWidth = 1.2;
+      for (let i = 0; i < 6; i++) { let x = r() * w, y = r() * h; g.beginPath(); g.moveTo(x, y); for (let k = 0; k < 7; k++) { x += (r() - 0.5) * 70; y += (r() - 0.5) * 70; g.lineTo(x, y); } g.stroke(); }
+    });
+    asphalt.wrapS = asphalt.wrapT = THREE.RepeatWrapping; asphalt.repeat.set(14, 11);
+    const apron = new THREE.Mesh(new THREE.PlaneGeometry(110, 86), new THREE.MeshStandardMaterial({ map: asphalt, roughness: 1 }));
     apron.rotation.x = -Math.PI / 2; apron.position.y = -0.01; apron.receiveShadow = true; s.add(apron);
-    // покрытие с полосами и разметкой
     const px = 64; // пикселей на метр
     const turf = canvasTexture(L * px, W * px, (g, w, h) => {
-      for (let i = 0; i < 12; i++) { g.fillStyle = i % 2 ? '#2f8f4e' : '#2a8347'; g.fillRect((i * w) / 12, 0, w / 12 + 1, h); }
+      for (let i = 0; i < 12; i++) { g.fillStyle = i % 2 ? '#3fc45c' : '#2fa84b'; g.fillRect((i * w) / 12, 0, w / 12 + 1, h); }
+      // светлее в центре, глубже к бортам: поле читается объёмно даже при ровном свете
+      const gr = g.createRadialGradient(w / 2, h / 2, h * 0.1, w / 2, h / 2, w * 0.6);
+      gr.addColorStop(0, 'rgba(225,255,150,0.2)'); gr.addColorStop(1, 'rgba(0,45,40,0.26)');
+      g.fillStyle = gr; g.fillRect(0, 0, w, h);
+      const r = rng(7);
+      for (let i = 0; i < 7000; i++) { g.fillStyle = r() < 0.5 ? 'rgba(255,255,255,0.035)' : 'rgba(0,50,20,0.06)'; g.fillRect(r() * w, r() * h, 2, 4 + r() * 7); }
       // своя половина слегка теплее: граница для тела читается, для мяча стены нет
-      g.fillStyle = 'rgba(255,214,120,0.07)'; g.fillRect(0, 0, w / 2, h);
-      g.strokeStyle = 'rgba(255,255,255,0.92)'; g.lineWidth = 5;
-      g.strokeRect(4, 4, w - 8, h - 8);
-      g.beginPath(); g.moveTo(w / 2, 0); g.lineTo(w / 2, h); g.stroke();
-      g.beginPath(); g.arc(w / 2, h / 2, 1.5 * px, 0, Math.PI * 2); g.stroke();
-      g.fillStyle = '#fff'; g.beginPath(); g.arc(w / 2, h / 2, 7, 0, Math.PI * 2); g.fill();
-      const ins = F.goalInset * px;
+      g.fillStyle = 'rgba(255,224,120,0.06)'; g.fillRect(0, 0, w / 2, h);
+      const ins = F.goalInset * px, cy = h / 2, hw = (gw / 2) * px;
       for (const left of [true, false]) {
-        // пол внутри ворот — в цвет стороны; линия ворот между стойками; площадь ворот от линии
-        g.fillStyle = left ? 'rgba(36,64,107,0.85)' : 'rgba(107,48,36,0.85)';
-        g.fillRect(left ? 0 : w - ins, h / 2 - (gw / 2) * px, ins, gw * px);
-        const lx = left ? ins : w - ins, d = 2.2 * px, hw = (gw / 2 + 1) * px;
-        g.beginPath(); g.moveTo(lx, h / 2 - (gw / 2) * px); g.lineTo(lx, h / 2 + (gw / 2) * px); g.stroke();
-        g.strokeRect(left ? lx : lx - d, h / 2 - hw, d, hw * 2);
+        // пол внутри ворот — в цвет стороны
+        g.fillStyle = left ? 'rgba(40,110,235,0.5)' : 'rgba(240,84,60,0.5)';
+        g.fillRect(left ? 0 : w - ins, cy - hw, ins, gw * px);
+      }
+      g.strokeStyle = '#ffffff'; g.lineWidth = 6; g.lineJoin = 'round';
+      g.strokeRect(5, 5, w - 10, h - 10);
+      g.beginPath(); g.moveTo(w / 2, 0); g.lineTo(w / 2, h); g.stroke();
+      g.beginPath(); g.arc(w / 2, cy, 1.5 * px, 0, Math.PI * 2); g.stroke();
+      g.fillStyle = '#fff'; g.beginPath(); g.arc(w / 2, cy, 8, 0, Math.PI * 2); g.fill();
+      for (const left of [true, false]) {
+        // линия ворот между стойками; площадь ворот — со скруглёнными углами, как на дворовых кортах
+        const lx = left ? ins : w - ins, dir = left ? 1 : -1, R = 2.2 * px;
+        g.beginPath(); g.moveTo(lx, cy - hw); g.lineTo(lx, cy + hw); g.stroke();
+        g.beginPath();
+        if (left) { g.arc(lx, cy - hw, R, -Math.PI / 2, 0, false); g.lineTo(lx + R, cy + hw); g.arc(lx, cy + hw, R, 0, Math.PI / 2, false); }
+        else { g.arc(lx, cy - hw, R, -Math.PI / 2, -Math.PI, true); g.lineTo(lx - R, cy + hw); g.arc(lx, cy + hw, R, Math.PI, Math.PI / 2, true); }
+        g.stroke();
+        g.fillStyle = '#fff'; g.beginPath(); g.arc(lx + dir * 3.1 * px, cy, 6, 0, Math.PI * 2); g.fill();
       }
     });
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(L, W), new THREE.MeshStandardMaterial({ map: turf, roughness: 0.95 }));
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(L, W), new THREE.MeshStandardMaterial({ map: turf, roughness: 0.9 }));
     ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; s.add(ground);
+  }
 
-    // борта: сплошные до boardHeight; ближний к камере — полупрозрачный, чтобы не закрывать край поля
-    const boardMatL = new THREE.MeshStandardMaterial({ color: 0x2c4a7a, roughness: 0.7 });
-    const boardMatR = new THREE.MeshStandardMaterial({ color: 0x7a3a2c, roughness: 0.7 });
-    const nearMat = (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6, transparent: true, opacity: 0.3, depthWrite: false });
-    const cap = new THREE.MeshStandardMaterial({ color: 0xe9edf2, roughness: 0.5 });
-    const bh = F.boardHeight, th = 0.12;
+  // Коробка: расписанные бетонные борта, выше — сетка-рабица на тёмных стойках
+  _buildCage(F) {
+    const L = F.length, W = F.width, gw = F.goalWidth, gh = F.goalHeight, s = this.scene;
+    const bh = F.boardHeight, th = 0.16;
+    const WORDS = ['RUA 1x1', 'ARENA DUEL', 'JOGA BOLA', 'STREET CUP'];
+    const wallTex = (len, team, seed) => canvasTexture(Math.round(len * 96), 128, (g, w, h) => {
+      const r = rng(seed);
+      g.fillStyle = '#131518'; g.fillRect(0, 0, w, h);
+      for (let i = 0; i < w; i++) { g.fillStyle = r() < 0.5 ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.1)'; g.fillRect(r() * w, r() * h, 2 + r() * 3, 2 + r() * 3); }
+      // редкая белая трафаретная надпись: борт остаётся тёмным фоном для поля и мяча
+      g.font = '900 54px Impact, "Arial Black", sans-serif'; g.fillStyle = 'rgba(255,255,255,0.82)'; g.textBaseline = 'middle';
+      for (let x = w * 0.5 - 60 + (r() - 0.5) * 40, k = 0; k < 1; k++) {
+        const word = WORDS[Math.floor(r() * WORDS.length)];
+        g.fillRect(x - 26, h * 0.3, 6, h * 0.5); g.fillText(word, x, h * 0.57); g.fillRect(x + g.measureText(word).width + 20, h * 0.3, 6, h * 0.5);
+      }
+      // полоса цвета стороны по верху борта
+      g.fillStyle = team; g.fillRect(0, 0, w, 10);
+    });
+    const blue = '#2f7bff', red = '#ff5a44';
+    const capMat = new THREE.MeshStandardMaterial({ color: 0x1b1e22, roughness: 0.6 });
+    const plain = new THREE.MeshStandardMaterial({ color: 0x131518, roughness: 0.9 });
     const addBoard = (x, z, sx, sz, mat) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(sx, bh, sz), mat);
-      m.position.set(x, bh / 2, z); m.castShadow = !mat.transparent; m.receiveShadow = !mat.transparent; s.add(m);
-      const c = new THREE.Mesh(new THREE.BoxGeometry(sx + 0.02, 0.05, sz + 0.02), cap); c.position.set(x, bh + 0.025, z); s.add(c);
+      const clear = !Array.isArray(mat) && mat.transparent;
+      m.position.set(x, bh / 2, z); m.castShadow = !clear; m.receiveShadow = !clear; s.add(m);
+      if (!clear) { const c = new THREE.Mesh(new THREE.BoxGeometry(sx + 0.04, 0.05, sz + 0.04), capMat); c.position.set(x, bh + 0.025, z); s.add(c); }
     };
-    addBoard(-L / 4, -(W / 2 + th / 2), L / 2, th, boardMatL);
-    addBoard(L / 4, -(W / 2 + th / 2), L / 2, th, boardMatR);
-    addBoard(-L / 4, W / 2 + th / 2, L / 2, th, nearMat(0x2c4a7a));
-    addBoard(L / 4, W / 2 + th / 2, L / 2, th, nearMat(0x7a3a2c));
+    // роспись — на стороне, обращённой в поле; остальные грани — крашеный бетон
+    const painted = (len, team, seed, face) => {
+      const mats = [plain, plain, plain, plain, plain, plain];
+      mats[face] = new THREE.MeshStandardMaterial({ map: wallTex(len, team, seed), roughness: 0.85 });
+      return mats;
+    };
+    const nearMat = (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6, transparent: true, opacity: 0.26, depthWrite: false });
+    addBoard(-L / 4, -(W / 2 + th / 2), L / 2, th, painted(L / 2, blue, 21, 4));
+    addBoard(L / 4, -(W / 2 + th / 2), L / 2, th, painted(L / 2, red, 22, 4));
+    addBoard(-L / 4, W / 2 + th / 2, L / 2, th, nearMat(0x2f7bff));
+    addBoard(L / 4, W / 2 + th / 2, L / 2, th, nearMat(0xff5a44));
     // торцевые борта с проёмом по ширине ворот: ворота уходят за коробку
     const endLen = (W - gw) / 2;
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) addBoard(sx * (L / 2 + th / 2), sz * (gw / 2 + endLen / 2), th, endLen, sx < 0 ? boardMatL : boardMatR);
-
-    // коробка выше бортов — прозрачные панели (физическая высота fenceHeight): мяч виден с любой стороны
-    const fenceH = F.fenceHeight - bh;
-    const glass = (w, opacity) => new THREE.Mesh(new THREE.PlaneGeometry(w, fenceH),
-      new THREE.MeshBasicMaterial({ color: 0xa9cbff, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false }));
-    const far = glass(L, 0.075); far.position.set(0, bh + fenceH / 2, -W / 2); s.add(far);
-    const near = glass(L, 0.02); near.position.set(0, bh + fenceH / 2, W / 2); s.add(near);
-    // торцевое остекление: сплошное выше ворот, по бокам от проёма — от борта
-    const pane = (w, h, x, y, z, opacity) => {
-      const e = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: 0xa9cbff, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false }));
-      e.rotation.y = Math.PI / 2; e.position.set(x, y, z); s.add(e);
-    };
-    for (const sx of [-1, 1]) {
-      pane(W, F.fenceHeight - gh, sx * L / 2, (F.fenceHeight + gh) / 2, 0, 0.055);
-      for (const sz of [-1, 1]) pane(endLen, gh - bh, sx * L / 2, (gh + bh) / 2, sz * (gw / 2 + endLen / 2), 0.055);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      addBoard(sx * (L / 2 + th / 2), sz * (gw / 2 + endLen / 2), th, endLen, painted(endLen, sx < 0 ? blue : red, 30 + sx * 3 + sz, sx < 0 ? 0 : 1));
     }
-    // каркас коробки: показывает её границы и высоту возврата высоких мячей
-    const railMat = new THREE.MeshStandardMaterial({ color: 0xbfc8d6, roughness: 0.4, metalness: 0.4 });
-    const thinMat = new THREE.MeshBasicMaterial({ color: 0xbfc8d6, transparent: true, opacity: 0.35 });
-    const rail = (ax, len, x, y, z, rad = 0.03, mat = railMat) => {
-      const m = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad, len, 8), mat);
+
+    // рабица выше бортов до физической высоты коробки; ближняя к камере сторона почти невидима
+    const chain = canvasTexture(64, 64, (g, w, h) => {
+      g.clearRect(0, 0, w, h); g.strokeStyle = 'rgba(214,224,236,0.95)'; g.lineWidth = 2.2;
+      g.beginPath(); g.moveTo(0, h / 2); g.lineTo(w / 2, 0); g.lineTo(w, h / 2); g.lineTo(w / 2, h); g.closePath(); g.stroke();
+    });
+    chain.wrapS = chain.wrapT = THREE.RepeatWrapping;
+    const mesh = (w, h, opacity) => {
+      const t = chain.clone(); t.needsUpdate = true; t.repeat.set(w / 0.22, h / 0.22);
+      return new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: t, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false }));
+    };
+    const fenceH = F.fenceHeight - bh;
+    const far = mesh(L, fenceH, 0.2); far.position.set(0, bh + fenceH / 2, -W / 2); s.add(far);
+    const near = mesh(L, fenceH, 0.035); near.position.set(0, bh + fenceH / 2, W / 2); s.add(near);
+    const pane = (w, h, x, y, z) => { const e = mesh(w, h, 0.16); e.rotation.y = Math.PI / 2; e.position.set(x, y, z); s.add(e); };
+    for (const sx of [-1, 1]) {
+      pane(W, F.fenceHeight - gh, sx * L / 2, (F.fenceHeight + gh) / 2, 0);
+      for (const sz of [-1, 1]) pane(endLen, gh - bh, sx * L / 2, (gh + bh) / 2, sz * (gw / 2 + endLen / 2));
+    }
+    // каркас: показывает границы коробки и высоту возврата высоких мячей
+    const railMat = new THREE.MeshStandardMaterial({ color: 0x2b3038, roughness: 0.5, metalness: 0.5 });
+    const rail = (ax, len, x, y, z, rad = 0.035) => {
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad, len, 8), railMat);
       if (ax === 'x') m.rotation.z = Math.PI / 2; else if (ax === 'z') m.rotation.x = Math.PI / 2;
       m.position.set(x, y, z); s.add(m);
     };
     // ближней к камере верхней балки нет: она проходила бы через кадр поперёк поля
     rail('x', L, 0, F.fenceHeight, -W / 2); rail('z', W, -L / 2, F.fenceHeight, 0); rail('z', W, L / 2, F.fenceHeight, 0);
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) rail('y', F.fenceHeight, sx * L / 2, F.fenceHeight / 2, sz * W / 2, 0.04);
-    for (let x = -L / 2 + 3; x < L / 2 - 0.1; x += 3) rail('y', fenceH, x, bh + fenceH / 2, -W / 2, 0.015, thinMat); // стойки остекления дальней стены
+    rail('x', L, 0, bh + fenceH * 0.45, -W / 2, 0.02);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) rail('y', F.fenceHeight, sx * L / 2, F.fenceHeight / 2, sz * W / 2, 0.055);
+    for (let x = -L / 2 + 3; x < L / 2 - 0.1; x += 3) rail('y', fenceH, x, bh + fenceH / 2, -W / 2, 0.03);
+    for (const sx of [-1, 1]) for (const z of [-gw / 2 - 0.02, gw / 2 + 0.02]) rail('y', F.fenceHeight - gh, sx * L / 2, (F.fenceHeight + gh) / 2, z, 0.025);
+    // гирлянда лампочек вдоль дальней стороны
+    const bulbGeo = new THREE.SphereGeometry(0.05, 8, 6), cols = [0xfff2c8, 0xfff2c8, 0xfff2c8, 0xfff2c8];
+    const span = 6, y0 = 3.6;
+    for (let x0 = -L / 2, n = 0; x0 < L / 2 - 0.1; x0 += span) for (let k = 1; k < 10; k++, n++) {
+      const u = k / 10, b = new THREE.Mesh(bulbGeo, new THREE.MeshBasicMaterial({ color: cols[n & 3] }));
+      b.position.set(x0 + u * span, y0 - 0.5 * Math.sin(Math.PI * u), -W / 2 + 0.06); s.add(b);
+    }
+  }
 
-
-    // ворота: круглая рама стоит в поле на линии ворот, сетка тянется от рамы до торцевого борта и прогибается от мяча
-    const postMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, metalness: 0.1 });
-    const stayMat = new THREE.MeshStandardMaterial({ color: 0xcfd6e0, roughness: 0.5 });
-    const netTex = gridTexture('rgba(255,255,255,0.95)', 2, 32);
-    const pr = F.postRadius, gi = F.goalInset, depth = F.goalInset + F.goalBack;
+  // Ворота: толстая белая труба, скобы у верхних углов, рама по покрытию; сетка свисает со скоб и уходит назад с наклоном.
+  // Полотна стоят там же, где их считает симуляция; низ задней сетки отнесён дальше — туда мяч не долетает, это запас полотна.
+  _buildGoals(F) {
+    const L = F.length, gw = F.goalWidth, gh = F.goalHeight, s = this.scene;
+    const postMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0.05 });
+    const UPV = new THREE.Vector3(0, 1, 0), V = (a, b, c) => new THREE.Vector3(a, b, c);
+    const tube = (a, b, rad, shadow = false) => {
+      const d = b.clone().sub(a), len = d.length();
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad, len, 16), postMat);
+      m.position.copy(a).addScaledVector(d, 0.5); m.quaternion.setFromUnitVectors(UPV, d.normalize());
+      m.castShadow = shadow; s.add(m);
+      return m;
+    };
+    const knob = (p, rad) => { const m = new THREE.Mesh(new THREE.SphereGeometry(rad, 14, 10), postMat); m.position.copy(p); s.add(m); };
+    const netTex = canvasTexture(64, 64, (g, w, h) => {
+      g.clearRect(0, 0, w, h);
+      g.strokeStyle = 'rgba(120,130,140,0.55)'; g.lineWidth = 7; g.strokeRect(0, 0, w, h); // тень шнура: сетка читается и на светлом
+      g.strokeStyle = '#ffffff'; g.lineWidth = 4.5; g.strokeRect(0, 0, w, h);
+    });
+    netTex.wrapS = netTex.wrapT = THREE.RepeatWrapping;
+    const pr = F.postRadius, gi = F.goalInset, depth = gi + F.goalBack, slope = 0.38, low = 0.045;
+    const bump = (a, b, w, h) => Math.sin(Math.PI * a / w) * Math.sin(Math.PI * b / h);
     this.nets = [];
     for (const sx of [-1, 1]) {
-      const x = sx * (L / 2 - gi), xb = sx * (L / 2 + F.goalBack); // линия ворот и задняя сетка за коробкой
+      const x = sx * (L / 2 - gi), xb = sx * (L / 2 + F.goalBack), xbb = xb + sx * slope; // линия ворот, верх и низ задней сетки
       for (const sz of [-1, 1]) {
-        const p = new THREE.Mesh(new THREE.CylinderGeometry(pr, pr, gh, 20), postMat);
-        p.position.set(x, gh / 2, sz * gw / 2); p.castShadow = true; s.add(p);
-        const joint = new THREE.Mesh(new THREE.SphereGeometry(pr, 16, 12), postMat); joint.position.set(x, gh, sz * gw / 2); s.add(joint);
-        // задняя стойка и верхняя растяжка держат сетку
-        const stay = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, depth, 8), stayMat);
-        stay.rotation.z = Math.PI / 2; stay.position.set((x + xb) / 2, gh, sz * gw / 2); s.add(stay);
-        const back = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, gh, 8), stayMat); back.position.set(xb, gh / 2, sz * gw / 2); s.add(back);
+        const z = sz * gw / 2;
+        tube(V(x, 0, z), V(x, gh, z), pr, true); knob(V(x, gh, z), pr);
+        // рама по покрытию: от стойки назад
+        tube(V(x, low, z), V(xbb, low, z), low); knob(V(xbb, low, z), low);
+        // скоба у верхнего угла: вытянутая петля в плоскости боковой сетки
+        const bl = 0.72, br = 0.13, rr = 0.032;
+        tube(V(x, gh, z), V(x + sx * bl, gh, z), rr); tube(V(x, gh - 2 * br, z), V(x + sx * bl, gh - 2 * br, z), rr);
+        const arc = new THREE.Mesh(new THREE.TorusGeometry(br, rr, 10, 18, Math.PI), postMat);
+        arc.rotation.z = -sx * Math.PI / 2; arc.position.set(x + sx * bl, gh - br, z); s.add(arc);
+        // растяжки: от скобы до верха задней сетки и вниз к раме
+        tube(V(x + sx * bl, gh, z), V(xb, gh, z), 0.014); tube(V(xb, gh, z), V(xbb, low, z), 0.014);
       }
-      const bar = new THREE.Mesh(new THREE.CylinderGeometry(pr, pr, gw, 20), postMat);
-      bar.rotation.x = Math.PI / 2; bar.position.set(x, gh, 0); bar.castShadow = true; s.add(bar);
-      const V = (a, b, c) => new THREE.Vector3(a, b, c);
-      // origin, оси u и v (единичные), размеры, нормаль наружу из ворот
-      this._addNet(netTex, sx, 'back', V(xb, 0, -gw / 2), V(0, 0, 1), V(0, 1, 0), gw, gh, V(sx, 0, 0));
-      this._addNet(netTex, sx, 'far', V(x, 0, -gw / 2), V(sx, 0, 0), V(0, 1, 0), depth, gh, V(0, 0, -1));
-      this._addNet(netTex, sx, 'near', V(x, 0, gw / 2), V(sx, 0, 0), V(0, 1, 0), depth, gh, V(0, 0, 1));
-      this._addNet(netTex, sx, 'top', V(x, gh, -gw / 2), V(sx, 0, 0), V(0, 0, 1), depth, gw, V(0, 1, 0));
-      // пол ворот за пределами коробки и нижняя растяжка задней сетки
-      const floor = new THREE.Mesh(new THREE.PlaneGeometry(F.goalBack, gw), new THREE.MeshStandardMaterial({ color: sx < 0 ? 0x24406b : 0x6b3024, roughness: 1 }));
-      floor.rotation.x = -Math.PI / 2; floor.position.set(sx * (L / 2 + F.goalBack / 2), 0.003, 0); floor.receiveShadow = true; s.add(floor);
-      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, gw, 8), stayMat);
-      base.rotation.x = Math.PI / 2; base.position.set(xb, 0.02, 0); s.add(base);
-      const topBack = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, gw, 8), stayMat);
-      topBack.rotation.x = Math.PI / 2; topBack.position.set(xb, gh, 0); s.add(topBack);
+      tube(V(x, gh, -gw / 2), V(x, gh, gw / 2), pr, true);
+      tube(V(xbb, low, -gw / 2), V(xbb, low, gw / 2), low);
+      tube(V(xb, gh, -gw / 2), V(xb, gh, gw / 2), 0.014);
+      // origin, оси u и v (единичные), размеры, нормаль наружу из ворот; последняя функция — форма полотна в покое
+      const lean = (b) => slope * (1 - b / gh);
+      this._addNet(netTex, sx, 'back', V(xb, 0, -gw / 2), V(0, 0, 1), V(0, 1, 0), gw, gh, V(sx, 0, 0), (a, b, o) => o.set(sx * (lean(b) + 0.06 * bump(a, b, gw, gh)), 0, 0));
+      this._addNet(netTex, sx, 'far', V(x, 0, -gw / 2), V(sx, 0, 0), V(0, 1, 0), depth, gh, V(0, 0, -1), (a, b, o) => o.set(sx * (a / depth) * lean(b), 0, -0.05 * bump(a, b, depth, gh)));
+      this._addNet(netTex, sx, 'near', V(x, 0, gw / 2), V(sx, 0, 0), V(0, 1, 0), depth, gh, V(0, 0, 1), (a, b, o) => o.set(sx * (a / depth) * lean(b), 0, 0.05 * bump(a, b, depth, gh)));
+      this._addNet(netTex, sx, 'top', V(x, gh, -gw / 2), V(sx, 0, 0), V(0, 0, 1), depth, gw, V(0, 1, 0), (a, b, o) => o.set(0, -0.07 * bump(a, b, depth, gw), 0));
+      // пол ворот за пределами коробки
+      const floor = new THREE.Mesh(new THREE.PlaneGeometry(F.goalBack + slope, gw), new THREE.MeshStandardMaterial({ color: sx < 0 ? 0x2c62c4 : 0xc8503c, roughness: 1 }));
+      floor.rotation.x = -Math.PI / 2; floor.position.set(sx * (L / 2 + (F.goalBack + slope) / 2), 0.003, 0); floor.receiveShadow = true; s.add(floor);
+    }
+  }
+
+  // Двор: дома разной высоты вплотную к коробке с дальней стороны и с торцов. Со стороны камеры домов нет.
+  _buildStreet(F) {
+    const L = F.length, W = F.width, s = this.scene, r = rng(2026);
+    const pick = (a) => a[Math.floor(r() * a.length)];
+    const PLASTER = ['#6f737a', '#7d7f82', '#646970', '#84807b', '#5c6168', '#77736f']; // одна приглушённая гамма: двор — фон, а не картинка
+    const facade = (wM, hM, style, seed) => {
+      const k = Math.min(48, 1024 / Math.max(wM, hM));
+      const t = canvasTexture(Math.round(wM * k), Math.round(hM * k), (g, w, h) => {
+        const q = rng(seed), qp = (a) => a[Math.floor(q() * a.length)];
+        if (style === 'brick') {
+          g.fillStyle = '#6a5850'; g.fillRect(0, 0, w, h);
+          const bhp = Math.max(3, 0.1 * k), bwp = bhp * 2.4;
+          for (let y = 0, row = 0; y < h; y += bhp, row++) for (let x = (row % 2) * -bwp / 2; x < w; x += bwp) {
+            g.fillStyle = (q() < 0.5 ? 'rgba(200,180,165,' : 'rgba(30,20,15,') + (0.03 + q() * 0.08) + ')'; g.fillRect(x + 0.5, y + 0.5, bwp - 1, bhp - 1);
+          }
+          g.fillStyle = 'rgba(92,90,88,0.9)'; // бетонные перекрытия между этажами
+          for (let y = h; y > 0; y -= 2.8 * k) g.fillRect(0, y - 0.22 * k, w, 0.22 * k);
+        } else {
+          g.fillStyle = style; g.fillRect(0, 0, w, h);
+          for (let i = 0; i < 14; i++) { g.fillStyle = q() < 0.5 ? 'rgba(255,255,255,0.03)' : 'rgba(20,20,25,0.05)'; g.fillRect(q() * w, q() * h, 20 + q() * 120, 30 + q() * 160); }
+          const gr = g.createLinearGradient(0, h * 0.8, 0, h); gr.addColorStop(0, 'rgba(60,45,35,0)'); gr.addColorStop(1, 'rgba(60,45,35,0.32)');
+          g.fillStyle = gr; g.fillRect(0, h * 0.8, w, h * 0.2);
+        }
+        // окна по этажам; на первом этаже — двери
+        const floors = Math.max(1, Math.floor(hM / 2.8)), cols = Math.max(1, Math.floor(wM / 2.3));
+        for (let f = 0; f < floors; f++) for (let c = 0; c < cols; c++) {
+          if (q() < 0.2) continue;
+          const cx = ((c + 0.5) / cols) * w, base = h - f * 2.8 * k;
+          const door = f === 0 && q() < 0.35;
+          const ww = (door ? 0.95 : 1.05 + q() * 0.3) * k, wh = (door ? 2.1 : 1.15) * k, top = base - (door ? 2.1 : 2.25) * k;
+          g.fillStyle = 'rgba(150,153,158,0.9)'; g.fillRect(cx - ww / 2 - 2, top - 2, ww + 4, wh + (door ? 2 : 4));
+          g.fillStyle = door ? qp(['#33383f', '#3d3a38', '#2f353d']) : '#252b33'; g.fillRect(cx - ww / 2, top, ww, wh);
+          if (!door) {
+            g.strokeStyle = 'rgba(150,153,158,0.7)'; g.lineWidth = 1.5;
+            g.beginPath(); g.moveTo(cx, top); g.lineTo(cx, top + wh); g.moveTo(cx - ww / 2, top + wh * 0.45); g.lineTo(cx + ww / 2, top + wh * 0.45); g.stroke();
+          }
+        }
+      });
+      return new THREE.MeshStandardMaterial({ map: t, roughness: 0.95 });
+    };
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0x55585d, roughness: 1 });
+    const tankMat = new THREE.MeshStandardMaterial({ color: 0x4a5560, roughness: 0.7 });
+    const rustMat = new THREE.MeshStandardMaterial({ color: 0x4a4744, roughness: 0.9 }); let lastStyle = '';
+    const house = (x, z, w, d, h, y0 = 0) => {
+      let style = r() < 0.38 ? 'brick' : pick(PLASTER); if (style === lastStyle) style = style === 'brick' ? pick(PLASTER) : 'brick'; // соседние дома не сливаются в один
+      lastStyle = style; const seed = Math.floor(r() * 1e6);
+      const front = facade(w, h, style, seed), side = facade(d, h, style, seed + 1);
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), [side, side, roofMat, roofMat, front, front]);
+      m.position.set(x, y0 + h / 2, z); s.add(m);
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(w + 0.3, 0.14, d + 0.3), roofMat); slab.position.set(x, y0 + h + 0.07, z); s.add(slab);
+      if (r() < 0.6) { const t = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.6, 0.95, 14), tankMat); t.position.set(x + (r() - 0.5) * w * 0.5, y0 + h + 0.62, z + (r() - 0.5) * d * 0.4); s.add(t); }
+      if (r() < 0.5) for (let k = 0; k < 4; k++) { const p = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.9 + r() * 0.5, 0.06), rustMat); p.position.set(x + (k % 2 ? 1 : -1) * (w / 2 - 0.2), y0 + h + 0.55, z + (k < 2 ? 1 : -1) * (d / 2 - 0.2)); s.add(p); }
+      if (y0 > 0) { const b = new THREE.Mesh(new THREE.BoxGeometry(w + 0.4, y0, d + 0.4), roofMat); b.position.set(x, y0 / 2, z); s.add(b); }
+    };
+    // дальняя сторона: три ряда, каждый следующий выше — склон
+    const rows = [{ z: -W / 2 - 4.0, d: 5, h: [5.5, 8.5], y: 0 }, { z: -W / 2 - 9.6, d: 5.5, h: [6, 9.5], y: 3.2 }, { z: -W / 2 - 15.5, d: 6, h: [6, 10], y: 7 }];
+    for (const row of rows) {
+      let x = -L / 2 - 14 + r() * 2;
+      while (x < L / 2 + 14) { const w = 4 + r() * 3; house(x + w / 2, row.z + (r() - 0.5) * 0.8, w, row.d, row.h[0] + r() * (row.h[1] - row.h[0]), row.y); x += w + (r() < 0.25 ? 0.9 : 0.05); }
+    }
+    // торцы: дома за воротами
+    for (const sx of [-1, 1]) {
+      let z = -W / 2 - 1;
+      while (z < W / 2 + 3) { const d = 4 + r() * 2.5, w = 5 + r() * 2; house(sx * (L / 2 + 3.2 + w / 2), z + d / 2, w, d, 5 + r() * 4); z += d + 0.05; }
+    }
+    // фонари по дальним углам
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0x2b3038, roughness: 0.5, metalness: 0.5 });
+    for (const sx of [-1, 1]) {
+      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 9.2, 10), poleMat); p.position.set(sx * (L / 2 + 0.5), 4.6, -W / 2 - 0.5); s.add(p);
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.16, 0.4), poleMat); head.position.set(sx * (L / 2 + 0.1), 9.2, -W / 2 - 0.3); s.add(head);
+      const glow = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.05, 0.3), new THREE.MeshBasicMaterial({ color: 0xfff3c4 })); glow.position.set(sx * (L / 2 + 0.1), 9.1, -W / 2 - 0.3); s.add(glow);
     }
   }
 
   // Полотно сетки: сетка вершин, которую можно прогибать вдоль нормали
-  _addNet(tex, side, part, origin, u, v, w, h, normal) {
-    const cell = 0.16, nu = Math.max(2, Math.round(w / cell)), nv = Math.max(2, Math.round(h / cell));
+  _addNet(tex, side, part, origin, u, v, w, h, normal, shape) {
+    const cell = 0.13, off = new THREE.Vector3(), nu = Math.max(2, Math.round(w / cell)), nv = Math.max(2, Math.round(h / cell));
     const geo = new THREE.PlaneGeometry(w, h, nu, nv);
     const pos = geo.attributes.position, base = new Float32Array(pos.count * 3), ab = new Float32Array(pos.count * 2);
     for (let i = 0; i < pos.count; i++) {
       const a = pos.getX(i) + w / 2, b = pos.getY(i) + h / 2;
-      const x = origin.x + u.x * a + v.x * b, y = origin.y + u.y * a + v.y * b, z = origin.z + u.z * a + v.z * b;
+      if (shape) shape(a, b, off);
+      const x = origin.x + u.x * a + v.x * b + off.x, y = origin.y + u.y * a + v.y * b + off.y, z = origin.z + u.z * a + v.z * b + off.z;
       pos.setXYZ(i, x, y, z); base.set([x, y, z], i * 3); ab.set([a, b], i * 2);
     }
     pos.needsUpdate = true; geo.computeBoundingSphere();
     const t = tex.clone(); t.needsUpdate = true; t.repeat.set(w / cell, h / cell);
-    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: t, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false }));
+    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: t, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }));
     mesh.frustumCulled = false;
     this.scene.add(mesh);
     const maxOut = 0.45;

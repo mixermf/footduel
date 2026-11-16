@@ -95,7 +95,7 @@ export class PlayerRig {
     // kneeFront — насколько колено обязано смотреть вперёд-вверх от линии бедро — стопа (0 — на линии, 1 — строго вперёд);
     // kneeRate — предел скорости поворота колена вокруг этой линии, 1/с.
     this.adapt = { kickLeg: true, kickRef: true, kickReach: 0.45, simLead: 0.14, simHold: 0.12, simAfter: 0.15, kneeFront: 0.25, kneeRate: 30,
-      antLead: 0.55, antFull: 0.2, pelvisReach: 0.18, legMin: 0.9, legMax: 0.97, clipLead: 0.15, leadBall: 0.67,
+      antLead: 0.55, antFull: 0.2, pelvisReach: 0.18, legMin: 0.9, legMax: 0.97, clipLead: 0.15, leadBall: 0.67, idleCalm: 0.6, idleDrop: 0.012, // at rest: share of the clip's pelvis sway and bob removed; extra crouch, m
       legFree: 0.85, legBall: 0.2 };
     // clipLead — the run clip is sampled this share of the cycle ahead of the sim phase: measured, the clip's pelvis was lowest
     //   at the toe-off instead of the middle of the support (the body sank in flight and rose on landing);
@@ -134,6 +134,7 @@ export class PlayerRig {
         if (mat.transparent) { mat.alphaTest = 0.35; mat.depthWrite = true; mat.transparent = /lash/i.test(mat.name); }
       }
     });
+    this._stylize(model);
     this.root.updateMatrixWorld(true);
     refreshSkin();
     const B = this.bones;
@@ -217,7 +218,35 @@ export class PlayerRig {
   _yawQuat(theta, out) { return out.setFromAxisAngle(UP, Math.PI / 2 - theta - this.phi0); }
 
   // Пружина с затуханием: вторичное движение догоняет цель с небольшой инерцией
-  // Цвет формы: оттенок умножается на текстуру футболки и шорт
+  // Стилизованный материал игрока: свет ложится тремя ступенями вместо плавного перехода, форма — чистым цветом без рисунка
+  // ткани (складки остаются от карты нормалей), по контуру — светлая кайма, которая отделяет фигуру от поля.
+  _stylize(model) {
+    const ramp = new THREE.DataTexture(new Uint8Array([92, 92, 92, 255, 150, 150, 150, 255, 205, 205, 205, 255]), 3, 1, THREE.RGBAFormat);
+    ramp.minFilter = ramp.magFilter = THREE.NearestFilter; ramp.needsUpdate = true;
+    const LOOK = { // тон поверх текстуры и сила каймы
+      Tops: { flat: true, color: 0x2a66d6, rim: 0.22 }, Bottoms: { flat: true, color: 0x15316f, rim: 0.18 },
+      Body: { color: 0xe6d3c6, rim: 0.14 }, Hair: { color: 0xe2d6c2, rim: 0.1 }, Shoes: { color: 0xdedede, rim: 0.12 },
+    };
+    model.traverse((o) => {
+      if (!o.isMesh) return;
+      const src = o.material, look = LOOK[Object.keys(LOOK).find((k) => o.name.startsWith(k))] || { color: 0xffffff, rim: 0 };
+      const mat = new THREE.MeshToonMaterial({
+        name: src.name, map: look.flat ? null : src.map, normalMap: src.normalMap, gradientMap: ramp, color: look.color,
+        transparent: src.transparent, alphaTest: src.alphaTest, depthWrite: src.depthWrite, side: src.side,
+      });
+      if (src.normalMap) mat.normalScale.copy(src.normalScale).multiplyScalar(look.flat ? 0.45 : 1); // on a flat colour full-strength folds break the shading into blotches
+      if (look.rim > 0) {
+        mat.onBeforeCompile = (sh) => {
+          sh.uniforms.rimK = { value: look.rim };
+          sh.fragmentShader = sh.fragmentShader.replace('void main() {', 'uniform float rimK;\nvoid main() {').replace('#include <opaque_fragment>',
+            'float rim = pow(1.0 - clamp(dot(normalize(vViewPosition), normal), 0.0, 1.0), 2.6);\n  outgoingLight += vec3(1.0, 0.97, 0.9) * rim * rimK * (0.35 + 0.65 * diffuseColor.rgb);\n  #include <opaque_fragment>');
+        };
+      }
+      o.material = mat; src.dispose();
+    });
+  }
+
+  // Цвет формы: футболка и шорты — чистый цвет
   setKit(top, bottom) {
     this.root.traverse((o) => {
       if (!o.isMesh) return;
@@ -420,10 +449,12 @@ export class PlayerRig {
     // добавочный наклон: поза клипа уже содержит наклон бега, здесь только ускорение, спринт и события
     // sprint leans clearly further than the run; the start throws the body forward, braking sits it back
     const spr = air || aux.withBall ? 0 : clamp((speed - 3.5) / 1.1, 0, 1);
+    // juggling: jg — share of the juggling pose, jb — a pulse on every touch (the leg goes to the ball, then springs back)
+    const jg = clamp(this.sp.wJug ? this.sp.wJug.x : 0, 0, 1), jb = this._spring('jugBeat', aux.juggle && aux.juggle.swing ? 1 : 0, 4.5, 0.45, dt);
     let leanFT = clamp(0.021 * this._acc.f + 0.03 * run + 0.045 * Math.max(0, speed - 2.6) + 0.1 * spr, -0.3, 0.46);
     if (g && g.type === 'chest') leanFT -= 0.18 * gw;
     if (g && g.type === 'hit') leanFT -= 0.32 * gw; // непринятый мяч в корпус: игрока отбрасывает назад
-    leanFT += 0.15 * gd;
+    leanFT += 0.15 * gd - (0.07 + 0.06 * jb) * jg; // the body sits back a little from the ball and rocks with every touch
     if (air && !kicking) leanFT -= 0.12; // в прыжке корпус выпрямляется, а не горбится
     // jump: jp — the crouch before the push-off (0..1), jU — vertical speed as a share of the take-off speed (1 up, -1 down)
     const jp = aux.jumpPrep > 0 && !air ? clamp(1 - aux.jumpPrep / 0.075, 0.25, 1) : 0, jU = air ? clamp((aux.vy || 0) / 3.7, -1, 1) : 0;
@@ -476,6 +507,7 @@ export class PlayerRig {
       if (lie > 0.01 && !sideFall) { swT += (0 - swT) * lie; abdT = Math.max(abdT, 0.95 * lie * (1 - 0.6 * Math.min(1, Math.abs(rollB))) * (this._fallSide ? 0.45 : 1)); flexT += (0.25 - flexT) * lie; } // лёжа руки раскинуты
       if (sl > 0.01) { swT += (-0.35 - swT) * sl; abdT = Math.max(abdT, 0.55 * sl); flexT += (0.3 - flexT) * sl; }
       if (bk > 0.01) { swT += (0.35 - swT) * bk; abdT = Math.max(abdT, 0.6 * bk); flexT += (0.4 - flexT) * bk; } // руки в стороны для баланса
+      if (jg > 0.01 && !kOn && !air) { abdT = Math.max(abdT, (0.3 + 0.18 * jb) * jg); swT += side * 0.12 * jb * jg * (aux.juggle && aux.juggle.side > 0 ? 1 : -1); } // arms out for balance, they answer every touch
       if (gd > 0.01 && !kOn && !air) { const k = gd * gProc; swT += (0.28 - swT) * k; abdT = Math.max(abdT, 0.55 * k); flexT += (0.75 - flexT) * k; }
       const sw = this._spring('aSw' + i, swT, 5.5, 0.55, dt), abd = this._spring('aAbd' + i, abdT, 5, 0.65, dt), flex = this._spring('aFl' + i, flexT, 5.5, 0.6, dt);
       const upper = addQ.clone().multiply(_q.setFromAxisAngle(r, sw)).multiply(_q2.setFromAxisAngle(f, -side * abd));
@@ -520,11 +552,16 @@ export class PlayerRig {
     if (this._wasAir && !air && !fl) this.sp.squash = { x: (this.sp.squash ? this.sp.squash.x : 0), v: 0.8 + 0.75 * Math.max(0, -(this._vyAir || 0)) };
     this._wasAir = air; if (air) this._vyAir = aux.vy || 0;
     const squash = this._spring('squash', 0, 2.6, 0.7, dt);
+    // standing still: the idle clip was captured with the actor shifting from foot to foot, while here the feet stay planted.
+    // At full sway the pelvis ran into the straight-leg limit and bounced off it — the knees twitched (25° to 5° in a few frames).
+    // So at rest the sway and the bob are damped and the stance sits a little lower: the knees keep a reserve
+    const idleW = clamp(this.sp.wIdle ? this.sp.wIdle.x : 0, 0, 1) * (1 - gd);
     const crouch = 0.012 + 0.012 * run * (1 - wk) /* the run lands on a bent knee, not on a straight leg */ + KP.drop +Math.min(0.05, accMag * 0.0035) + (kPhase === 'windup' || kPhase === 'swing' ? 0.02 + 0.02 * kc : 0)
-      + (feetT[0].top || feetT[1].top ? 0.03 : 0) + Math.max(0, squash) + 0.15 * jpS + 0.1 * gd + 0.5 * sl + 0.3 * rc + drop;
-    const swayX = pose.hips.x * this.hipRestY;
+      + (feetT[0].top || feetT[1].top ? 0.03 : 0) + Math.max(0, squash) + 0.15 * jpS + 0.1 * gd + 0.5 * sl + 0.3 * rc + drop + this.adapt.idleDrop * idleW + (0.01 + 0.026 * (1 - jb)) * jg; // juggling: soft knees between the touches, the body rises into every touch (the working leg meets the ball straight)
+    const swayX = pose.hips.x * this.hipRestY * (1 - this.adapt.idleCalm * idleW);
     const hipBack = refW > 0.01 ? profile(KICK_REF.hipBack, this._kc) * refW : 0;
-    const cx = s.px + r.x * -swayX + f.x * (leanF * 0.15 - hipBack), cz = s.pz + r.z * -swayX + f.z * (leanF * 0.15 - hipBack);
+    const hipB = hipBack + 0.05 * jg; // juggling: the pelvis stays behind the ball, the working leg reaches forward nearly straight
+    const cx = s.px + r.x * -swayX + f.x * (leanF * 0.15 - hipB), cz = s.pz + r.z * -swayX + f.z * (leanF * 0.15 - hipB);
     let allowed = 9;
     const A0 = new THREE.Vector3();
     if (!air) {
@@ -545,7 +582,8 @@ export class PlayerRig {
     // ходьба: у бегового клипа таз ниже всего в середине опоры, у шага — наоборот. Высоту задаёт сама опорная нога:
     // почти прямая, таз идёт над ней дугой — выше всего над стопой, ниже всего на двойной опоре
     const walkY = Math.min(allowed, this.hipRestY) - 0.008;
-    const clipY = pose.hips.y < 1 ? pose.hips.y + (1 - pose.hips.y) * KICK_REF.pelvis * refW : pose.hips.y;
+    const clipY0 = pose.hips.y < 1 ? pose.hips.y + (1 - pose.hips.y) * KICK_REF.pelvis * refW : pose.hips.y;
+    const clipY = clipY0 + (0.985 - clipY0) * this.adapt.idleCalm * idleW;
     const pelT = Math.min((clipY * this.hipRestY - crouch) * (1 - wk) + walkY * wk, allowed);
     const pelvisY = s.py + this._spring('pelY', pelT, 8, 0.9, dt);
     this.diag.pelvisY = pelvisY;
@@ -627,6 +665,7 @@ export class PlayerRig {
         target += (0.22 - target) * bw; // спиной вперёд: без захлёста, стопа идёт низко и почти ровно
         if (ft.top) target *= 1 - u; // подошва ложится на мяч плоско
         if (isKickFoot) target = 0.55;
+        if (aux.juggle && (aux.juggle.side > 0) === (i === 1) && aux.juggle.swing) target = 0.12; // juggling: the instep meets the ball nearly level
         if (air) target = 0.5;
         if (sl > 0.3 && aux.slide) target = aux.slide.foot === i ? -0.25 : 0.7; // lead foot: toes up; trailing foot: laid back
         const k = dt > 0 ? Math.min(1, 26 * dt) : 1;

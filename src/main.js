@@ -440,7 +440,7 @@ function runFrame(now) {
   const mine = world.players[sess && sess.me === 1 ? 1 : 0];
   scene.updateBall(view.bx, view.by, view.bz, cur.bqx, cur.bqy, cur.bqz, cur.bqw);
   scene.updateNets(view.bx, view.by, view.bz, dtReal);
-  const auxOf = (q) => ({ ball, kick: q.kick, gesture: q.gesture, guard: q.guard || !!q.lunge, withBall: !!q.possession, juggle: !!q.juggle, slide: q.slide, reach: q.reach, fall: q.fall, jumpPrep: q.jumpPrep, vy: q.vy });
+  const auxOf = (q) => ({ ball, kick: q.kick, gesture: q.gesture, guard: q.guard || !!q.lunge, withBall: !!q.possession, juggle: q.juggle, slide: q.slide, reach: q.reach, fall: q.fall, jumpPrep: q.jumpPrep, vy: q.vy });
   rig.update(view, auxOf(P0), dtVis);
   if (online && P1) rig2.update(view.p2, auxOf(P1), dtVis);
   scene.updateAim(mine.kick, world.P);
@@ -458,7 +458,7 @@ async function boot() {
   try {
     const info = await rig.load(scene.scene, profile.player.height);
     await rig2.load(scene.scene, profile.player.height);
-    rig2.setKit(0xff5548, 0xf2f2f2); // соперник справа — в красном
+    rig2.setKit(0xd8432f, 0x7f1c17); // соперник справа — в красном (свой игрок — в синем, цвет задан в риге)
     rig2.root.visible = false;
     if (LAB_ENABLED) console.info('[rig]', info);
   } catch (err) {
