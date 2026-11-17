@@ -10,13 +10,14 @@ import { NetClient } from './net/client.js';
 import { Lobby } from './net/lobby.js';
 import { BALL_EVENTS, COUNTDOWN_MS, SHIRT_NUMBERS } from './net/protocol.js';
 import { MatchIntro, INTRO, blendView } from './render/intro.js';
+import { Bot, BOT_LEVELS } from './ai/bot.js';
 
 const LAB_ENABLED = import.meta.env.DEV || import.meta.env.MODE === 'lab';
 const SETTINGS_KEY = 'soccer-duel-desktop.settings.v1';
 const angDiff = (a, b) => { let d = (a - b) % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2; return d; };
 
 function loadSettings() {
-  const def = { sfx: 0.8, music: 0.5, vibration: true, shake: true };
+  const def = { sfx: 0.8, music: 0.5, vibration: true, shake: true, botLevel: 'medium' };
   try { return { ...def, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') }; } catch { return def; }
 }
 
@@ -25,6 +26,10 @@ const sandbox = new World(profile, { seed: (Date.now() & 0xffff) || 1 });
 // Сетевая дуэль считается на отдельном мире со своим профилем: правки лаборатории не расходятся с сервером
 const duel = new World(createProfile(), { seed: 1, duel: true });
 duel.recording = false;
+// Матч с ботом: та же дуэль, что по сети, но оба игрока считаются здесь; вы — слева (синие), бот — справа
+const vsBot = new World(createProfile(), { seed: 1, duel: true });
+vsBot.recording = false;
+let bot = null, botOver = false;
 
 const game = {
   world: sandbox,
@@ -60,11 +65,11 @@ applySettings();
 
 function setMode(mode) {
   game.mode = mode;
-  world = mode === 'online' ? duel : sandbox;
+  world = mode === 'online' ? duel : mode === 'bot' ? vsBot : sandbox;
   game.world = world;
   game.replay = null; sandbox.recording = true;
-  rig2.root.visible = mode === 'online';
-  scene.setReboundWall(mode === 'online' ? false : sandbox.P.field.reboundWall);
+  rig2.root.visible = mode !== 'sandbox';
+  scene.setReboundWall(mode === 'sandbox' ? sandbox.P.field.reboundWall : false);
   scene.shake = 0;
   input.pressed.clear();
   acc = 0; world.snapshot(prev); world.snapshot(cur);
@@ -144,6 +149,7 @@ function mainMenu() {
   game.state = 'menu';
   hud.openMenu('Soccer Duel', `Enter / A — выбрать, ↑↓ — пункт. Версия ${game.version}.`, [
     { label: 'Песочница', act: () => { hud.closeMenu(); input.suppressHeld(); game.state = 'play'; last = performance.now(); acc = 0; } },
+    botLevelItem('Матч с ботом', () => startBotMatch()),
     { label: 'Игра по сети: создать комнату', act: () => openLobby('create') },
     { label: 'Игра по сети: войти по коду', act: () => openLobby('join') },
     ...settingsItems(),
@@ -162,6 +168,62 @@ function quitGame() {
     { label: 'Вернуться в главное меню', act: () => mainMenu() },
   ]);
   try { window.close(); } catch { /* закрытие запрещено браузером */ }
+}
+
+// ---------- матч с ботом
+const LEVEL_KEYS = Object.keys(BOT_LEVELS);
+function botLevelItem(label, act) {
+  const step = (d) => {
+    const i = LEVEL_KEYS.indexOf(game.settings.botLevel);
+    game.settings.botLevel = LEVEL_KEYS[(i + d + LEVEL_KEYS.length) % LEVEL_KEYS.length]; applySettings(); sfx.play('ui');
+  };
+  return { label, value: () => '◀ ' + (BOT_LEVELS[game.settings.botLevel] || BOT_LEVELS.medium).label + ' ▶', act, adjust: step };
+}
+
+function startBotMatch() {
+  hud.closeMenu();
+  setMode('bot');
+  const lvl = BOT_LEVELS[game.settings.botLevel] ? game.settings.botLevel : 'medium';
+  vsBot.seed = (Math.random() * 0xffff | 0) || 1; // кто вводит мяч, зависит от зерна
+  vsBot.reset('duel');
+  bot = game.bot = new Bot(1, lvl, vsBot.seed); // game.bot.L — параметры уровня, их можно крутить из консоли
+  botOver = false;
+  vsBot.snapshot(prev); vsBot.snapshot(cur);
+  rig.setBack(lobby.name || 'Игрок', 10); rig2.setBack('Бот', [7, 13, 11, 23, 9][vsBot.seed % 5]);
+  input.suppressHeld();
+  game.state = 'play'; last = performance.now(); acc = 0;
+  sfx.play('whistle');
+  hud.showToast(`Матч с ботом · ${BOT_LEVELS[lvl].label} · до ${vsBot.P.match.goalsToWin} голов`, { ms: 1600 });
+}
+
+// матч окончен: итог и выбор — реванш, другая сложность, меню
+function botMatchOver() {
+  botOver = true;
+  const win = vsBot.winner === 0;
+  game.state = 'pause';
+  hud.openMenu(win ? 'Победа!' : 'Поражение', `${vsBot.goals[0]} : ${vsBot.goals[1]} · бот: ${BOT_LEVELS[bot.level].label.toLowerCase()}`, [
+    { label: 'Реванш', act: () => startBotMatch() },
+    botLevelItem('Сложность', () => startBotMatch()),
+    { label: 'Выйти в главное меню', act: () => mainMenu() },
+  ]);
+}
+
+function stepBot(dtReal) {
+  if (game.state !== 'play' || !bot) return;
+  acc += dtReal;
+  let simSteps = 0;
+  while (acc >= simDt && simSteps < 16) {
+    const t = prev; prev = cur; cur = t;
+    input.fill(frameIn, simSteps === 0);
+    world.step(frameIn, bot.think(world));
+    handleEvents(world.events, 0);
+    world.snapshot(cur);
+    acc -= simDt; simSteps++;
+    if (world.phase === 'over') break;
+  }
+  if (simSteps > 0) input.endFrameEdges();
+  if (simSteps === 16) acc = 0;
+  if (world.phase === 'over' && !botOver) botMatchOver();
 }
 
 function openLobby(kind, code = '') {
@@ -198,6 +260,19 @@ function pause(reason) {
     ], CONTROLS);
     return;
   }
+  if (game.mode === 'bot') {
+    game.state = 'pause';
+    world.clearActions(); // удержанный удар не срабатывает после паузы
+    bot.reset();
+    hud.openMenu('Пауза', reason || `Матч с ботом · ${vsBot.goals[0]} : ${vsBot.goals[1]}. Esc — продолжить.`, [
+      { label: 'Продолжить', act: resume },
+      botLevelItem('Начать заново', () => startBotMatch()),
+      ...settingsItems(),
+      { label: 'Выйти в главное меню', act: () => mainMenu() },
+      { label: 'Выход из игры', act: quitGame },
+    ], CONTROLS);
+    return;
+  }
   game.state = 'pause';
   world.clearActions();
   hud.openMenu('Пауза', reason || 'Enter / A — выбрать, ↑↓ — пункт, ←→ — значение, Esc — продолжить.', [
@@ -214,6 +289,7 @@ function pause(reason) {
 
 function resume() {
   if (game.state !== 'pause') return;
+  if (game.mode === 'bot' && botOver) { botMatchOver(); return; } // матч окончен: меню итога остаётся
   hud.closeMenu();
   input.suppressHeld(); // удержанное до паузы не срабатывает, пока не отпущено
   game.state = 'play';
@@ -263,7 +339,7 @@ function nextServe() { pending.serve = true; }
 let intro = null, introWas = false; const introV = [{}, {}]; // сцена выхода перед сетевым матчем
 // Лаборатория: показать кадр сцены выхода без сервера — introPreview(t), t в секундах от начала; introPreview(-1) — выключить
 game.introPreview = (t, dt = 1 / 60) => {
-  if (t < 0) { scene.cine = null; rig2.root.visible = game.mode === 'online'; game.introFrame = null; return null; }
+  if (t < 0) { scene.cine = null; rig2.root.visible = game.mode !== 'sandbox'; game.introFrame = null; return null; }
   if (!intro) intro = new MatchIntro(rig);
   const fr = intro.frame(t, game.introPick || [0, 1]);
   rig2.root.visible = true; rig2.setBack('Гость', 9);
@@ -468,7 +544,8 @@ function runFrame(now) {
     else if (menuCmds.includes('pause')) pause();
   }
 
-  if (online) stepOnline(dtReal, now); else stepSandbox(dtReal);
+  const vsAI = game.mode === 'bot', duo = online || vsAI; // два игрока на поле
+  if (online) stepOnline(dtReal, now); else if (vsAI) stepBot(dtReal); else stepSandbox(dtReal);
   if (online) lobby.render(game.net, now);
 
   // интерполяция изображения между двумя шагами симуляции
@@ -476,13 +553,13 @@ function runFrame(now) {
   const a = running ? Math.min(1, acc / simDt) : 1;
   const err = sess ? sess.err : null;
   lerpPlayer(view, prev, cur, a, err ? err.p[0] : ZERO);
-  if (online) lerpPlayer(view.p2, prev.p2, cur.p2, a, err ? err.p[1] : ZERO);
+  if (duo) lerpPlayer(view.p2, prev.p2, cur.p2, a, err ? err.p[1] : ZERO);
   if (sess && sess.hasState && sess.me >= 0) { const rv = sess.me === 0 ? view.p2 : view; sess.remoteView(rv, running ? dtReal : 0, rv); } // rv уже содержит предсказанное положение соперника
   const eb = err ? err.b : ZERO;
   view.bx = prev.bx + (cur.bx - prev.bx) * a + eb.x; view.bz = prev.bz + (cur.bz - prev.bz) * a + eb.z;
   view.by = Math.max(world.P.ball.radius, prev.by + (cur.by - prev.by) * a + eb.y);
 
-  const dtVis = running ? dtReal * (online ? 1 : game.timeScale) : 0;
+  const dtVis = running ? dtReal * (duo ? 1 : game.timeScale) : 0;
   const ball = { x: view.bx, y: view.by, z: view.bz };
   const P0 = world.players[0], P1 = world.players[1];
   const mine = world.players[sess && sess.me === 1 ? 1 : 0];
@@ -510,15 +587,16 @@ function runFrame(now) {
   } else {
     scene.cine = null;
     rig.update(view, auxOf(P0), dtVis);
-    if (online && P1) rig2.update(view.p2, auxOf(P1), dtVis);
+    if (duo && P1) rig2.update(view.p2, auxOf(P1), dtVis);
   }
   introWas = introOn;
-  if (running) { stepSound(view, P0, 0); if (online && P1) stepSound(view.p2, P1, 1); }
+  if (running) { stepSound(view, P0, 0); if (duo && P1) stepSound(view.p2, P1, 1); }
   scene.updateAim(mine.kick, world.P);
   scene.updateCamera(view.px, view.pz, view.yaw, dtReal);
   game.lab?.onFrame(dtReal);
-  hud.update(dtReal, world, input, game.replay ? 'ПОВТОР' : game.timeScale !== 1 && !online ? game.timeScale + '×' : '',
-    online ? { me: sess ? Math.max(0, sess.me) : 0, lobby: sess?.lobby, rtt: sess?.rtt || 0, replayed: sess?.replayed || 0 } : null);
+  hud.update(dtReal, world, input, game.replay ? 'ПОВТОР' : game.timeScale !== 1 && !duo ? game.timeScale + '×' : '',
+    online ? { me: sess ? Math.max(0, sess.me) : 0, lobby: sess?.lobby, rtt: sess?.rtt || 0, replayed: sess?.replayed || 0 }
+      : vsAI && bot ? { me: 0, title: 'Матч с ботом · ' + BOT_LEVELS[bot.level].label.toLowerCase(), lobby: { players: [{ name: lobby.name || 'Вы' }, { name: 'Бот' }] }, rtt: 0, replayed: 0 } : null);
   scene.render(dtReal);
 }
 

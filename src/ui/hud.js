@@ -58,7 +58,7 @@ export class Hud {
       : k.plan ? 'выход на мяч — удар в касание'
         : k.phase === 'charge' ? 'заряд — направления управляют прицелом'
         : k.phase === 'ready' ? 'подход к мячу' : k.phase === 'curl' ? 'ПОДКРУТКА' : 'удар';
-    const title = net ? `Сеть${net.lobby ? ' · ' + net.lobby.code : ''} · пинг ${Math.round(net.rtt)} мс${net.rtt > 110 ? ' (высокий)' : ''}` : 'Песочница';
+    const title = net && net.title ? net.title : net ? `Сеть${net.lobby ? ' · ' + net.lobby.code : ''} · пинг ${Math.round(net.rtt)} мс${net.rtt > 110 ? ' (высокий)' : ''}` : 'Песочница';
     const st = `${title} · <b>${mode}</b> · ${phase}${extra ? ' · ' + extra : ''}`;
     if (st !== this._stateKey) { this._stateKey = st; this.state.innerHTML = st; }
     const has = world._hasBall(p); // тот же признак, по которому симуляция выбирает действие кнопок
