@@ -34,6 +34,8 @@ npm.cmd run build:soccer-duel-desktop   # релизная сборка без �
 node scripts/bot-match.mjs              # уровни друг против друга без графики: победы, голы, удары, отмены
 node scripts/bot-match.mjs hard easy 20 # одна пара, 20 матчей
 node scripts/bot-saves.mjs hard         # сколько прямых ударов с места пропускает уровень
+node scripts/bot-twin.mjs hard          # честность: бот не узнаёт прицел до удара и реагирует не быстрее своей задержки восприятия
+node scripts/bot-lobs.mjs hard          # сколько навесов через себя пропускает уровень
 node scripts/bot-drills.mjs hard        # упражнения: высокий удар в створ, навес на свою половину, отбить сразу — с умением и без
 ```
 
