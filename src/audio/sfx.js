@@ -1,9 +1,10 @@
 // Звук матча, целиком синтезированный в WebAudio (записанных сэмплов в проекте нет).
 // Палитра — как в футбольной трансляции: глухой удар по мячу со шлепком кожи, шелест сетки, звон штанги, стук борта,
-// дребезг рабицы, свисток, шаги по газону, шорох подката, гул двора и реакция зрителей на гол и на штангу.
+// дребезг рабицы, свисток, шаги по газону, шорох подката и реакция зрителей на гол и на штангу.
+// Постоянного фона нет: между событиями — тишина.
 // События приходят только от физических контактов симуляции; k — сила 0..1, pan — положение по ширине кадра −1..1.
 export class Sfx {
-  constructor() { this.ctx = null; this._vol = 0.8; this.musicVolume = 0.5; this._amb = null; }
+  constructor() { this.ctx = null; this._vol = 0.8; this.musicVolume = 0.5; }
 
   get volume() { return this._vol; }
   set volume(v) { this._vol = v; if (this.master) this.master.gain.value = v; }
@@ -26,7 +27,6 @@ export class Sfx {
     for (let ch = 0; ch < 2; ch++) { const x = ir.getChannelData(ch); for (let i = 0; i < rl; i++) x[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / rl, 3.2) * (i < sr * 0.012 ? 0.2 : 1); }
     this.rev = c.createConvolver(); this.rev.buffer = ir;
     const rg = c.createGain(); rg.gain.value = 0.5; this.rev.connect(rg).connect(this.master);
-    this._ambience();
   }
 
   // выход одного звука: панорама и доля отзвука
@@ -75,19 +75,6 @@ export class Sfx {
     g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(gain, t + 0.015); g.gain.setValueAtTime(gain, t + dur - 0.04); g.gain.linearRampToValueAtTime(0.0001, t + dur);
     o.connect(g).connect(out); o.start(t); l.start(t); o.stop(t + dur + 0.03); l.stop(t + dur + 0.03);
     this._noise(out, dur, gain * 0.25, 3200, 3, 'bandpass', delay, 0, 0.01);
-  }
-
-  // гул двора: далёкий город и негромкие голоса за сеткой; идёт всё время, пока есть звук
-  _ambience() {
-    const c = this.ctx, mk = (f, q, type, gain, lfoHz) => {
-      const s = c.createBufferSource(); s.buffer = this.noise; s.loop = true;
-      const bq = c.createBiquadFilter(); bq.type = type; bq.frequency.value = f; bq.Q.value = q;
-      const g = c.createGain(); g.gain.value = gain;
-      if (lfoHz) { const l = c.createOscillator(), lg = c.createGain(); l.frequency.value = lfoHz; lg.gain.value = gain * 0.45; l.connect(lg).connect(g.gain); l.start(); }
-      s.connect(bq).connect(g).connect(this.master); s.start(0, Math.random());
-    };
-    mk(180, 0.5, 'lowpass', 0.07, 0.07); // город
-    mk(600, 1.2, 'bandpass', 0.02, 0.11); mk(1300, 1.8, 'bandpass', 0.01, 0.17); // голоса
   }
 
   play(name, k = 0.5, pan = 0) {
