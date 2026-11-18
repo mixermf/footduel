@@ -398,10 +398,14 @@ export class World {
 
     const kickWaiting = p.kick && (p.kick.phase === 'charge' || p.kick.phase === 'ready');
     if (P.kick.jumpKicks && p.jumpBuf > 0 && kickWaiting && !p.kick.jumpOk) {
-      // прыжок при зажатом ударе разрешает удары по высокому мячу. Если мяч уже идёт высоко, игрок не прыгает сразу:
-      // толчок произойдёт в расчётный момент, под удар; иначе это обычный прыжок, и бить можно уже из него
+      // прыжок при зажатом ударе разрешает удары по высокому мячу. Если точка удара с прыжком будет позже (или мяч ещё
+      // далеко), игрок не прыгает сразу: толчок произойдёт в расчётный момент, под удар; иначе прыжок сразу, и бить — из него
       p.kick.jumpOk = true;
-      if (p.y <= 0 && p.kick.dynamic && this.ball.y > 1.0) { p.jumpBuf = 0; this.events.push({ type: 'kick_armed' }); }
+      if (p.y <= 0 && this._armJump(p)) { p.jumpBuf = 0; this.events.push({ type: 'kick_armed' }); }
+    } else if (P.kick.jumpKicks && kickWaiting && p.jumpPrep > 0 && p.y <= 0 && !p.kick.armChecked) {
+      // сначала прыжок, сразу за ним удар (игрок ещё в подседе): то же самое — толчок переносится на расчётный момент
+      p.kick.armChecked = true;
+      if (this._armJump(p)) { p.jumpPrep = 0; this.events.push({ type: 'kick_armed' }); }
     }
     if (p.jumpBuf > 0 && p.y <= 0 && (!p.kick || kickWaiting)) {
       p.jumpBuf = 0;
@@ -422,6 +426,17 @@ export class World {
 
       }
     }
+  }
+
+  // Отложить ли толчок прыжка при зажатом ударе. Точка встречи есть: толчок делает план удара в расчётный момент (если удар с прыжком); без прыжка —
+  // прыгать не нужно, удар и так достаёт. Точки пока нет: мяч далеко — ждать её; мяч уже рядом и высоко — прыгать сразу,
+  // из прыжка ищется удар (а не достанет — мяч встретит корпус или голова)
+  _armJump(p) {
+    const k = p.kick, b = this.ball;
+    if (!k.dynamic) return false;
+    const pl = this._strikePlan(p, k);
+    if (pl) return true; // толчок (если нужен) сделает сам план удара — с расчётной скоростью и в расчётный момент
+    return !(this._ballDist(p) < 2.2 && b.y > 0.8);
   }
 
   _ballDist(p) { return Math.hypot(this.ball.x - p.x, this.ball.z - p.z); }
@@ -1330,6 +1345,7 @@ export class World {
     if (!k.free && (k.phase === 'charge' || k.phase === 'ready' || k.phase === 'windup' || k.phase === 'swing')) {
       // прицел в экранных осях: вверх/вниз — сторона ворот, к воротам — выше, от ворот — ниже (как в привычных футбольных играх)
       const tLat = input.mz, tHigh = input.mx * attack;
+      k.lastMz = input.mz; // стик на последнем шаге до контакта: от него отсчитывается подкрутка после удара
       if (input.digital) {
         k.aimLat = clamp(k.aimLat + tLat * K.aimRateDigital * dt, -1, 1);
         k.aimHigh = clamp(k.aimHigh + tHigh * K.aimRateDigital * dt, -1, 1);
@@ -1466,11 +1482,12 @@ export class World {
       return;
     }
     if (k.phase === 'curl') {
-      // окно после контакта: ввод добавляет ограниченную подкрутку, игрока не двигает
-      k.curlIn += input.mz; k.curlN++;
+      // окно после контакта: подкрутку добавляет только движение стика после удара. Прицел, который игрок всё ещё держит
+      // в сторону угла, подкруткой не считается — иначе удар в дальний угол закручивался бы от ворот
+      k.curlIn += input.mz ? input.mz - (k.mzHit || 0) : 0; k.curlN++; // отпущенный стик — без подкрутки
       if (k.t >= K.curlWindow) {
         const c = clamp(k.curlN ? k.curlIn / k.curlN : 0, -1, 1);
-        if (Math.abs(c) > 0.05 && Math.abs(b.vx) > 0.5) b.wy = -c * Math.sign(b.vx) * K.maxSpin;
+        if (Math.abs(c) > 0.05 && Math.abs(b.vx) > 0.5) b.wy = clamp(b.wy - c * Math.sign(b.vx) * K.maxSpin, -K.maxSpin, K.maxSpin);
         this.events.push({ type: 'kick_end', curl: c });
         this._endKick(p, 'done');
       }
@@ -1720,17 +1737,25 @@ export class World {
     b.vz = Math.sin(yaw) * cp * speed + p.vz * carry;
     b.vy = Math.sin(pitch) * speed;
     if (!lob) {
-      // Spin from the contact. The foot meets the ball below its centre the more, the higher the shot goes: backspin grows
-      // with the launch angle (a driven low shot keeps a little, a volley hit downwards gets topspin). Sidespin comes from
-      // the foot crossing the line of the shot — the player running across the ball slices it — and from the inside of
-      // the foot on a soft, placed shot. The curl the player adds after the contact still replaces the sidespin.
-      const S = K.spin, sy = Math.sin(yaw), cy = Math.cos(yaw), q = sup ? S.superShare : 1;
-      const back = speed * (S.base + S.lift * Math.sin(pitch)) * q; // > 0 — backspin, < 0 — topspin
-      const across = -p.vx * sy + p.vz * cy; // the player's speed across the line of the shot, to his right
-      const side = (S.across * across + S.inside * k.footSide * (1 - k.charge) * speed) * q;
-      b.wx = -sy * back; b.wz = cy * back; b.wy = side;
-      const wl = Math.hypot(b.wx, b.wy, b.wz); if (wl > S.max) { const m = S.max / wl; b.wx *= m; b.wy *= m; b.wz *= m; }
+      // Вращение от контакта. Чем выше уходит мяч, тем ниже центра бьёт стопа: обратное вращение растёт с углом вылета
+      // (низовой удар — немного, удар с лёта вниз — верхнее). Боковое — удар в угол закручивается к центру ворот, как удар
+      // щёчкой «на дальнюю»: сильнее при мягком ударе, слабее при полном заряде. Направление вылета берётся шире прицела
+      // настолько, чтобы дуга закончилась в выбранной точке (погрешность удара добавляется уже к нему).
+      const S = K.spin, q = sup ? S.superShare : 1;
+      const side = Math.sign(tz) * Math.min(1, Math.abs(k.aimLat)) * S.curl * (1 - S.curlPower * k.charge) * q;
+      const spinAt = (yw) => {
+        const sy = Math.sin(yw), cy = Math.cos(yw), back = speed * (S.base + S.lift * Math.sin(pitch)) * q; // > 0 — обратное
+        b.wx = -sy * back; b.wz = cy * back; b.wy = side * Math.sign(cy);
+        const wl = Math.hypot(b.wx, b.wy, b.wz); if (wl > S.max) { const m = S.max / wl; b.wx *= m; b.wy *= m; b.wz *= m; }
+      };
+      if (Math.abs(side) > 0.5) {
+        const aimYaw = yaw - (errYaw * Math.PI) / 180, dyaw = this._curlAim(aimYaw, pitch, speed, carry, p, tz, k.gx, spinAt);
+        yaw += dyaw;
+        const cp1 = Math.cos(pitch); b.vx = Math.cos(yaw) * cp1 * speed + p.vx * carry; b.vz = Math.sin(yaw) * cp1 * speed + p.vz * carry;
+      }
+      spinAt(yaw);
     }
+    k.mzHit = k.lastMz || 0;
     if (b.y <= P.ball.radius + 1e-3 && b.vy > 0) b.y = P.ball.radius + 2e-4;
     p.lastTouchTick = this.tick; p.lastKickTick = this.tick;
     k.phase = 'curl'; k.t = 0;
@@ -1751,6 +1776,35 @@ export class World {
       error: { sigma, yaw: errYaw, pitch: errPitch, playerSpeed: pSpeed, turn, offset: k.offset || 0 },
       volley, jump: jumpKick, firstTime: !!k.dyn, incoming, bike: !!k.bike, fly: !!k.fly, kind: k.type,
     });
+  }
+
+  // Поправка направления вылета на закрутку: на сколько повернуть удар, чтобы мяч с этим вращением пересёк линию ворот
+  // в точке прицела tz. Прогон полёта той же физикой; spinAt(yaw) выставляет вращение мяча для направления yaw.
+  _curlAim(yaw, pitch, speed, carry, p, tz, gx, spinAt) {
+    const P = this.P, b = this.ball, r = P.ball.radius;
+    const c = this._pred3 || (this._pred3 = {}), ev = this._predEv || (this._predEv = []);
+    const x0 = b.x, y0 = b.y, z0 = b.z;
+    let dy = 0;
+    for (let it = 0; it < 3; it++) {
+      const yw = yaw + dy, cp = Math.cos(pitch);
+      spinAt(yw);
+      Object.assign(c, b);
+      c.x = x0; c.y = Math.max(y0, r + 2e-4); c.z = z0;
+      c.vx = Math.cos(yw) * cp * speed + p.vx * carry; c.vz = Math.sin(yw) * cp * speed + p.vz * carry; c.vy = Math.sin(pitch) * speed;
+      let hit = null;
+      for (let i = 0; i < 360; i++) {
+        const px = c.x, pz = c.z;
+        stepBall(c, 1 / 120, P, ev, null); ev.length = 0;
+        if ((c.x - gx) * (px - gx) <= 0) { const u = (gx - px) / ((c.x - px) || 1e-6); hit = pz + (c.z - pz) * u; break; }
+        if (Math.hypot(c.vx, c.vz) < 2) break;
+      }
+      if (hit === null) break;
+      const miss = tz - hit, d = Math.hypot(gx - x0, tz - z0) || 1;
+      if (Math.abs(miss) < 0.03) break;
+      dy += clamp(Math.atan2(miss, d) * Math.sign(Math.cos(yw)), -0.3, 0.3);
+    }
+    b.wx = b.wy = b.wz = 0;
+    return clamp(dy, -0.35, 0.35);
   }
 
   // Скорость навеса, при которой мяч опустится на покрытие в dist метрах: прогон полёта той же физикой (воздух, вращение)
