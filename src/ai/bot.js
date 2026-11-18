@@ -232,7 +232,7 @@ export class Bot {
     const dGoal = Math.hypot(gx - b.x, b.z);
     // ведение у центральной линии опасно: тело не перейдёт, а мяч уйдёт к сопернику
     const nearLine = p.x * -att < 0.9 && p.vx * att > 0.5;
-    const ready = dS < 0.6 || this.carryT > this.carryMax || nearLine;
+    const ready = dS < 0.6 || this.carryT > this.carryMax || nearLine || (p.holdT || 0) > w.P.match.hold.warn - 0.3; // не доводить до штрафа за удержание
     // бить, только когда мяч у ноги и не уходит от неё: иначе за время заряда он укатится (у центральной линии — к сопернику)
     const away = Math.hypot(b.vx - p.vx, b.vz - p.vz), roomX = b.x * side;
     if (ready && b.y < 0.4 && Math.hypot(b.x - p.x, b.z - p.z) < 0.85 && away < 1.6 && roomX > 0.5) {

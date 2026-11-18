@@ -656,7 +656,7 @@ test('ворота выступают в поле: гол в створ, шта�
   assert.ok(post2.b.vz < -1, 'от внутренней стороны штанги мяч уходит к центру ворот: ' + post2.b.vz.toFixed(1));
   // в перекладину
   const bar = shot((b) => { b.x = 4; b.y = F.goalHeight - 0.05; b.z = 0; b.vx = 20; b.vy = 1.05; }, 60);
-  assert.ok(bar.types.includes('post'));
+  assert.ok(bar.types.includes('post:bar'), 'перекладина отмечена отдельно от штанги');
   assert.equal(bar.goals, 0);
   // сбоку из-за линии ворот: боковая сетка снаружи
   const side = shot((b) => { b.x = gx + 0.4; b.y = 0.4; b.z = 3.5; b.vz = -12; });

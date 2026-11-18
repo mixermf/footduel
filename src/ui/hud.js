@@ -18,6 +18,7 @@ export class Hud {
   }
 
   showToast(text, { big = false, ms = 900 } = {}) {
+    if (this.points && this.points.busy && !big) return; // идёт разбор очков за гол: мелкие подсказки его не перекрывают
     this.toast.textContent = text;
     this.toast.className = 'hud-toast show' + (big ? ' big' : '');
     this._toastT = ms / 1000;
@@ -27,16 +28,13 @@ export class Hud {
   update(dt, world, input, extra, net = null) {
     const p = net ? world.players[net.me] : world.player, k = p.kick;
     if (net) {
+      // дуэль: табло очков с часами (src/ui/points.js)
       const L = net.lobby, names = [0, 1].map((i) => (L && L.players[i] ? L.players[i].name : '—'));
-      const sk = 'n' + world.goals.join(':') + names.join('|') + net.me;
-      if (sk !== this._scoreKey) {
-        this._scoreKey = sk;
-        this.score.replaceChildren();
-        const part = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; e.textContent = text; this.score.append(e); };
-        part('span', 'blue' + (net.me === 0 ? ' me' : ''), names[0]); part('b', '', String(world.goals[0]));
-        part('b', '', String(world.goals[1])); part('span', 'red' + (net.me === 1 ? ' me' : ''), names[1]);
-      }
+      this.score.style.display = 'none';
+      if (this.points) { if (!this.points.visible) this.points.setVisible(true); this.points.update(dt, world, net.me, names, performance.now()); }
     } else {
+      this.score.style.display = '';
+      if (this.points?.visible) this.points.setVisible(false);
       const sk = world.score.scored + ':' + world.score.conceded;
       if (sk !== this._scoreKey) {
         this._scoreKey = sk;

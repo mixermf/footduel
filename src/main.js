@@ -11,6 +11,8 @@ import { Lobby } from './net/lobby.js';
 import { BALL_EVENTS, COUNTDOWN_MS, SHIRT_NUMBERS } from './net/protocol.js';
 import { MatchIntro, INTRO, blendView } from './render/intro.js';
 import { Bot, BOT_LEVELS } from './ai/bot.js';
+import { PointsHud } from './ui/points.js';
+import { PointsFx } from './render/fx.js';
 
 const LAB_ENABLED = import.meta.env.DEV || import.meta.env.MODE === 'lab';
 const SETTINGS_KEY = 'soccer-duel-desktop.settings.v1';
@@ -47,6 +49,16 @@ window.__game = LAB_ENABLED ? game : undefined;
 game.version = '0.6.0';
 
 const { input, scene, rig, rig2, hud, sfx } = game;
+// очки дуэли: табло и разбор очков в HUD, частицы и кольца на поле
+hud.points = new PointsHud(document.getElementById('hud'), (x, y, z) => scene.toScreen(x, y, z));
+hud.points.onTick = (n) => sfx.play('ui', n <= 3 ? 0.9 : 0.5);
+const pfx = new PointsFx(scene.scene);
+// имена в дуэли: из лобби в сети, «Вы» и «Бот» в матче с ботом
+function duelNames() {
+  const L = game.mode === 'online' ? game.net?.session.lobby : null;
+  if (L) return [0, 1].map((i) => (L.players[i] ? L.players[i].name : '—'));
+  return [lobby.name || 'Вы', 'Бот'];
+}
 let world = sandbox;
 const simDt = world.dt;
 let acc = 0, last = performance.now(), lastRaw = last;
@@ -187,21 +199,25 @@ function startBotMatch() {
   vsBot.seed = (Math.random() * 0xffff | 0) || 1; // кто вводит мяч, зависит от зерна
   vsBot.reset('duel');
   bot = game.bot = new Bot(1, lvl, vsBot.seed); // game.bot.L — параметры уровня, их можно крутить из консоли
-  botOver = false;
+  botOver = false; clearTimeout(botMenuTimer);
+  hud.points.reset();
   vsBot.snapshot(prev); vsBot.snapshot(cur);
   rig.setBack(lobby.name || 'Игрок', 10); rig2.setBack('Бот', [7, 13, 11, 23, 9][vsBot.seed % 5]);
   input.suppressHeld();
   game.state = 'play'; last = performance.now(); acc = 0;
   sfx.play('whistle');
-  hud.showToast(`Матч с ботом · ${BOT_LEVELS[lvl].label} · до ${vsBot.P.match.goalsToWin} голов`, { ms: 1600 });
+  hud.showToast(`Матч с ботом · ${BOT_LEVELS[lvl].label} · ${Math.round(vsBot.P.match.duration / 60)} минуты, побеждают очки`, { ms: 1800 });
 }
 
 // матч окончен: итог и выбор — реванш, другая сложность, меню
+let botMenuTimer = 0;
 function botMatchOver() {
-  botOver = true;
-  const win = vsBot.winner === 0;
+  // сначала баннер итога (из события match_over), меню — через мгновение
+  if (!botOver) { botOver = true; game.state = 'pause'; botMenuTimer = setTimeout(botMatchOver, 1900); return; }
+  if (game.mode !== 'bot') return;
+  const w = vsBot.winner, title = w < 0 ? 'Ничья' : w === 0 ? 'Победа!' : 'Поражение';
   game.state = 'pause';
-  hud.openMenu(win ? 'Победа!' : 'Поражение', `${vsBot.goals[0]} : ${vsBot.goals[1]} · бот: ${BOT_LEVELS[bot.level].label.toLowerCase()}`, [
+  hud.openMenu(title, `Очки ${vsBot.points[0]} : ${vsBot.points[1]} · голы ${vsBot.goals[0]} : ${vsBot.goals[1]} · бот: ${BOT_LEVELS[bot.level].label.toLowerCase()}`, [
     { label: 'Реванш', act: () => startBotMatch() },
     botLevelItem('Сложность', () => startBotMatch()),
     { label: 'Выйти в главное меню', act: () => mainMenu() },
@@ -230,6 +246,7 @@ function openLobby(kind, code = '') {
   hud.closeMenu();
   setMode('online');
   duel.reset('duel'); duel.snapshot(prev); duel.snapshot(cur);
+  hud.points.reset();
   game.state = 'play';
   lobby.openForm(kind, code);
 }
@@ -264,7 +281,7 @@ function pause(reason) {
     game.state = 'pause';
     world.clearActions(); // удержанный удар не срабатывает после паузы
     bot.reset();
-    hud.openMenu('Пауза', reason || `Матч с ботом · ${vsBot.goals[0]} : ${vsBot.goals[1]}. Esc — продолжить.`, [
+    hud.openMenu('Пауза', reason || `Матч с ботом · очки ${vsBot.points[0]} : ${vsBot.points[1]}. Esc — продолжить.`, [
       { label: 'Продолжить', act: resume },
       botLevelItem('Начать заново', () => startBotMatch()),
       ...settingsItems(),
@@ -289,7 +306,7 @@ function pause(reason) {
 
 function resume() {
   if (game.state !== 'pause') return;
-  if (game.mode === 'bot' && botOver) { botMatchOver(); return; } // матч окончен: меню итога остаётся
+  if (game.mode === 'bot' && botOver) { if (!hud.menu) botMatchOver(); return; } // матч окончен: меню итога остаётся
   hud.closeMenu();
   input.suppressHeld(); // удержанное до паузы не срабатывает, пока не отпущено
   game.state = 'play';
@@ -422,11 +439,32 @@ function handleEvents(events, me = 0, accept = null) {
       case 'bounce': sfx.play('bounce', e.speed / 10, pan); break;
       case 'goal': {
         const scored = e.by === undefined ? e.scored : e.by === me;
-        sfx.play('goal'); hud.showToast(scored ? 'ГОЛ!' : 'Пропущен', { big: true, ms: 1100 });
+        sfx.play('goal');
+        if (e.pts !== undefined) {
+          // дуэль: разбор очков вместо тоста «ГОЛ!», частицы и кольца у ворот
+          scene.shake = Math.max(scene.shake, hud.points.goal(e, me, performance.now()));
+          const kit = e.by === 0 ? 0x2f7bff : 0xff5a44, dir = -Math.sign(b.x || 1), gx = Math.sign(b.x || 1) * (world.P.field.length / 2 - world.P.field.goalInset);
+          pfx.burst(gx, Math.min(1.8, Math.max(0.3, b.y)), b.z, dir, kit, e.pts >= 400 ? 140 : e.pts >= 200 ? 80 : 40);
+          pfx.ring(gx + dir * 1.2, b.z * 0.5, kit);
+          if (e.pts >= 400) pfx.ring(gx + dir * 1.2, b.z * 0.5, 0xffd34d, 0.12);
+        } else hud.showToast(scored ? 'ГОЛ!' : 'Пропущен', { big: true, ms: 1100 });
         if (e.by !== undefined) (e.by === 1 ? rig2 : rig).celebrate(); else if (e.scored) rig.celebrate(); // празднует забивший
         if (game.settings.vibration) input.rumble(0.8, 200);
         break;
       }
+      case 'hold_warn': if (mine) sfx.play('ui', 0.6); break;
+      case 'hold_penalty':
+        hud.points.penalty(e, world); sfx.play('cancel', 0.8, panOf(e));
+        if (mine && game.settings.vibration) input.rumble(0.3, 60);
+        break;
+      case 'buzzer': sfx.play('whistle'); break;
+      case 'overtime': sfx.play('whistle'); hud.showToast('Ничья — ЗОЛОТОЙ ГОЛ: первые очки решают', { big: false, ms: 1800 }); break;
+      case 'match_over':
+        if (e.points) {
+          sfx.play('whistle'); hud.points.finish(e.winner, me, e.points, duelNames());
+          if (e.winner >= 0) { const kit = e.winner === 0 ? 0x2f7bff : 0xff5a44, q = world.players[e.winner]; if (q) pfx.burst(q.x, 2, q.z, -Math.sign(q.x || 1), kit, 140); }
+        }
+        break;
       case 'kickoff': sfx.play('whistle'); hud.showToast(e.to === me ? 'Мяч у вас' : 'Мяч у соперника', { ms: 700 }); break;
       case 'kick_cancel': if (mine) { sfx.play('cancel'); hud.showToast('Удар отменён: ' + e.reason, { ms: 800 }); } break;
       case 'kick_miss': if (mine) { sfx.play('miss'); hud.showToast('Мимо мяча', { ms: 600 }); } break;
@@ -592,6 +630,13 @@ function runFrame(now) {
   introWas = introOn;
   if (running) { stepSound(view, P0, 0); if (duo && P1) stepSound(view.p2, P1, 1); }
   scene.updateAim(mine.kick, world.P);
+  // кольцо-таймер под игроком, который держит мяч: с порога предупреждения до штрафа
+  const HD = world.P.match.hold;
+  for (let i = 0; i < 2; i++) {
+    const q = world.players[i], v = i === 0 ? view : view.p2, h = duo && q && world.phase === 'play' ? q.holdT || 0 : 0;
+    pfx.holdRing(i, h >= HD.warn, v ? v.px : 0, v ? v.pz : 0, Math.max(0, (HD.grace - h) / (HD.grace - HD.warn)), h >= HD.grace);
+  }
+  pfx.update(dtReal);
   scene.updateCamera(view.px, view.pz, view.yaw, dtReal);
   game.lab?.onFrame(dtReal);
   hud.update(dtReal, world, input, game.replay ? 'ПОВТОР' : game.timeScale !== 1 && !duo ? game.timeScale + '×' : '',

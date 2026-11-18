@@ -37,6 +37,7 @@ function createPlayer(side) {
     gesture: null, mode: 'run', yawVel: 0, dragSign: 0, lastTouchKind: null,
     guard: false, lunge: null, lungeCd: 0, recvTick: -1000, juggle: null,
     slide: null, slideCd: 0, reach: null, reachCd: 0, superCharge: 0, fall: null, inX: 0, inZ: 0, crouch: 0, jumpPrep: 0, airWide: false,
+    holdT: 0, holdNext: 0, // дуэль: сколько секунд подряд игрок держит мяч, и когда следующий штраф за удержание
   };
 }
 
@@ -62,6 +63,10 @@ export class World {
     this.players = duel ? [createPlayer(-1), createPlayer(1)] : [createPlayer(-1)];
     this.player = this.players[0];
     this.goals = [0, 0]; this.winner = -1; this.kickTo = 0;
+    // очки дуэли: за голы с бонусами и штрафы за удержание; часы матча, с; overtime — время вышло при равенстве, до первых очков
+    this.points = [0, 0]; this.clock = 0; this.overtime = false; this.otT = 0; this.buzzer = false;
+    this.toucher = -1; // кто последним касался мяча (для штрафа за удержание)
+    this.shot = null; // последний удар: кто, каким ударом, что мяч задел по пути — для бонусов за гол
     this._ins = [emptyInput(), emptyInput()];
     this.events = [];
     this.inputLog = [];
@@ -85,6 +90,8 @@ export class World {
     this.events.length = 0;
     this.stats = { touches: 0, misses: 0, kicks: 0, kickMisses: 0, receives: 0, behindTime: 0, possessionTime: 0, lostControl: 0 };
     this.goals[0] = this.goals[1] = 0; this.winner = -1;
+    this.points[0] = this.points[1] = 0; this.clock = P.match.duration; this.overtime = false; this.shot = null;
+    this.otT = 0; this.buzzer = false; this.toucher = -1;
     Object.assign(b, createBall(P));
     if (this.duel) {
       this.score.scored = this.score.conceded = 0;
@@ -126,6 +133,7 @@ export class World {
     if (b.x * p.side < 0.3) b.x = p.side * 0.3;
     b.vx = b.vy = b.vz = 0; b.wx = b.wy = b.wz = 0; b.inGoal = false;
     this.goalLatch = false; this.idleFar = 0;
+    this.toucher = to; // ввод мяча считается касанием принимающего: без этого с мячом можно было бы стоять без штрафа
     this.events.push({ type: 'kickoff', to });
   }
 
@@ -193,6 +201,7 @@ export class World {
       tick: this.tick, phase: this.phase, phaseT: this.phaseT, goalLatch: this.goalLatch, idleFar: this.idleFar,
       feedIndex: this.feedIndex, serveIndex: this.serveIndex, kickTo: this.kickTo, winner: this.winner,
       rng: this.rng.state, score: this.score, goals: this.goals, stats: this.stats, ball: this.ball, players: this.players,
+      points: this.points, clock: this.clock, overtime: this.overtime, shot: this.shot, otT: this.otT, buzzer: this.buzzer, toucher: this.toucher,
     };
   }
 
@@ -202,6 +211,9 @@ export class World {
     this.feedIndex = s.feedIndex; this.serveIndex = s.serveIndex; this.kickTo = s.kickTo; this.winner = s.winner;
     this.rng.state = s.rng;
     Object.assign(this.score, s.score); this.goals[0] = s.goals[0]; this.goals[1] = s.goals[1];
+    if (s.points) { this.points[0] = s.points[0]; this.points[1] = s.points[1]; }
+    this.clock = s.clock ?? this.clock; this.overtime = !!s.overtime; this.shot = s.shot || null;
+    this.otT = s.otT || 0; this.buzzer = !!s.buzzer; this.toucher = s.toucher ?? -1;
     if (s.stats) this.stats = s.stats;
     Object.assign(this.ball, s.ball);
     for (let i = 0; i < this.players.length; i++) this.players[i] = s.players[i];
@@ -234,7 +246,7 @@ export class World {
     const h = [this.tick, r(p.x), r(p.z), r(p.y), r(p.yaw), r(p.vx), r(p.vz), r(b.x), r(b.y), r(b.z), r(b.vx), r(b.vy), r(b.vz), r(b.wy),
       r(p.feet[0].x), r(p.feet[1].z), this.score.scored, this.score.conceded];
     const q = this.players[1];
-    if (q) h.push(r(q.x), r(q.z), r(q.y), r(q.yaw), r(q.vx), r(q.vz), r(q.feet[0].x), r(q.feet[1].z), this.goals[0], this.goals[1], this.phase);
+    if (q) h.push(r(q.x), r(q.z), r(q.y), r(q.yaw), r(q.vx), r(q.vz), r(q.feet[0].x), r(q.feet[1].z), this.goals[0], this.goals[1], this.phase, this.points[0], this.points[1], r(this.clock));
     return h.join(',');
   }
 
@@ -308,14 +320,19 @@ export class World {
         if (this.duel) {
           const by = scored ? 0 : 1;
           this.goals[by]++; this.kickTo = 1 - by; // мяч вводит пропустивший
-          ev.push({ type: 'goal', scored, by });
-          if (this.goals[by] >= P.match.goalsToWin) { this.phase = 'over'; this.winner = by; ev.push({ type: 'match_over', winner: by }); }
+          const award = this._goalPoints(by);
+          this.points[by] += award.pts;
+          ev.push({ type: 'goal', scored, by, pts: award.pts, bonus: award.bonus, total: this.points[by] });
+          this.shot = null;
+          if (P.match.goalsToWin && this.goals[by] >= P.match.goalsToWin) this._endMatch(by);
+          else if (this.overtime || this.buzzer) this._endAtTime(); // гол после сирены или в дополнительное время
         } else ev.push({ type: 'goal', scored });
         break;
       }
     }
 
     for (const p of ps) this._possession(p);
+    if (this.duel) this._duelPoints(live, ev);
 
     if (this.duel) {
       // дуэль: мяч, замерший без владения (например, в углу у центра), вводится заново тому, на чьей он половине
@@ -440,6 +457,107 @@ export class World {
   }
 
   _ballDist(p) { return Math.hypot(this.ball.x - p.x, this.ball.z - p.z); }
+
+  // ---------- очки дуэли ----------
+  // Сколько очков за гол игрока by: база плюс бонусы по тому, каким ударом и как мяч зашёл. bonus — [ключ, очки] по порядку
+  _goalPoints(by) {
+    const S = this.P.match.points, s = this.shot, bonus = [];
+    const add = (key) => { if (S[key]) bonus.push([key, S[key]]); };
+    if (!s || s.pi !== by) {
+      // гол без удара забившего: рикошет от соперника в свои ворота — только база
+      bonus.push(['own', S.own]);
+    } else {
+      bonus.push(['goal', S.goal]);
+      if (s.bar) add('bar'); else if (s.post) add('post');
+      if (s.bike) add('bike'); else if (s.fly) add('fly'); else if (s.jump) add('jump'); else if (s.volley) add('volley');
+      if (s.juggle) add('juggle');
+      if (s.firstTime && !s.volley && !s.jump && !s.bike && !s.fly) add('firstTime');
+      if (s.kind === 'super') add('super'); else if (s.kind === 'lob') add('lob');
+      if (s.dist >= S.longDist && s.kind !== 'super') add('long');
+      if (s.speed >= S.powerSpeed && s.kind !== 'super') add('power');
+      if (s.wall) add('wall');
+      if (s.defl) add('defl');
+    }
+    let pts = 0; for (const b of bonus) pts += b[1];
+    const extra = pts - bonus[0][1];
+    if (S.cap && extra > S.cap) pts = bonus[0][1] + S.cap; // предел бонусов за один гол
+    return { pts, bonus };
+  }
+
+  // Отметки по пути удара (штанга, перекладина, борт, рикошет), удержание мяча (штраф) и часы матча
+  _duelPoints(live, ev) {
+    const P = this.P, M = P.match, H = M.hold, dt = this.dt, ps = this.players, b = this.ball;
+    const prevToucher = this.toucher;
+    let kicked = -1;
+    for (let i = 0; i < ev.length; i++) {
+      const e = ev[i];
+      // кто последним касался мяча — любым касанием, кроме пассивного удара мяча в тело
+      if (e.pi !== undefined && (e.type === 'touch' || e.type === 'kick' || e.type === 'receive' || e.type === 'header' || e.type === 'tackle' || e.type === 'body')) this.toucher = e.pi;
+      if (e.type === 'kick') kicked = e.pi;
+      const s = this.shot;
+      if (!s || e.type === 'kick') continue;
+      if (e.type === 'post') { if (e.part === 'bar') s.bar++; else s.post++; }
+      else if (e.type === 'wall') s.wall++;
+      else if ((e.type === 'body' || e.type === 'header' || e.type === 'receive' || e.type === 'tackle') && e.pi !== undefined && e.pi !== s.pi) {
+        if ((e.type === 'receive' && e.auto !== 'deflect') || e.type === 'tackle') this.shot = null; // соперник взял мяч — удар кончился
+        else s.defl = true; // непроизвольный рикошет: бонусы удара сохраняются
+      } else if ((e.type === 'touch' || e.type === 'receive') && e.pi === s.pi) this.shot = null; // забивший снова ведёт мяч
+    }
+    if (this.shot && Math.hypot(b.vx, b.vy, b.vz) < 1 && b.y < 0.3) this.shot = null; // мяч остановился — удар кончился
+    // Удержание: мяч на своей половине, и последним его касался этот игрок. Подбивы, откидки себе и чеканка счётчик не
+    // сбрасывают; сбрасывают касание соперника, переход мяча за центр, удар и ввод мяча
+    for (let i = 0; i < ps.length; i++) {
+      const p = ps[i];
+      const own = this.toucher === i && b.x * p.side > 0;
+      if (!live || !own || kicked === i || prevToucher !== this.toucher) { p.holdT = 0; p.holdNext = 0; if (!(live && own)) continue; }
+      const t0 = p.holdT; p.holdT += dt;
+      if (t0 < H.warn && p.holdT >= H.warn) ev.push({ type: 'hold_warn', pi: i, left: H.grace - H.warn });
+      if (p.holdT >= H.grace) {
+        if (!p.holdNext) p.holdNext = H.grace;
+        while (p.holdT >= p.holdNext) {
+          const n = Math.round(p.holdNext - H.grace); // который это штраф подряд, с 0
+          const pen = H.perSec + H.ramp * n;
+          this.points[i] -= pen;
+          if (!M.negative && this.points[i] < 0) this.points[i] = 0;
+          ev.push({ type: 'hold_penalty', pi: i, pts: -pen, total: this.points[i], held: p.holdT });
+          p.holdNext += 1;
+          if (this.overtime && this.points[0] !== this.points[1]) { this._endAtTime(); return; } // в дополнительное время решают любые очки
+        }
+      }
+    }
+    if (M.duration <= 0 || this.phase !== 'play') return; // часы идут только в розыгрыше: пауза после гола время не съедает
+    if (this.overtime) {
+      this.otT += dt;
+      if (this.otT >= M.overtime) this._endAtTime(true);
+      return;
+    }
+    if (this.buzzer) { if (!this.shot) this._endAtTime(); return; } // сирена прозвучала: ждём, чем кончится удар в полёте
+    const c0 = this.clock;
+    this.clock = Math.max(0, this.clock - dt);
+    if (c0 > 10 && this.clock <= 10) ev.push({ type: 'clock_last', left: 10 });
+    if (this.clock <= 0) {
+      ev.push({ type: 'buzzer' });
+      if (this.shot) this.buzzer = true; // удар уже летит: гол засчитается, если мяч зайдёт
+      else this._endAtTime();
+    }
+  }
+
+  // Время вышло: побеждает тот, у кого больше очков; при равенстве — дополнительное время до первых очков.
+  // final — дополнительное время тоже кончилось: решают голы, при их равенстве — ничья
+  _endAtTime(final = false) {
+    this.buzzer = false;
+    const [a, c] = this.points;
+    if (a !== c) { this._endMatch(a > c ? 0 : 1); return; }
+    if (!final && !this.overtime) { this.overtime = true; this.otT = 0; this.events.push({ type: 'overtime' }); return; }
+    if (!final) return;
+    const [g0, g1] = this.goals;
+    this._endMatch(g0 === g1 ? -1 : g0 > g1 ? 0 : 1);
+  }
+
+  _endMatch(winner) {
+    this.phase = 'over'; this.winner = winner;
+    this.events.push({ type: 'match_over', winner, points: this.points.slice(), goals: this.goals.slice() });
+  }
 
   // «С мячом»: мяч под контролем на покрытии, в чеканке или только что подброшен и ещё в воздухе рядом
   _hasBall(p) {
@@ -1334,6 +1452,8 @@ export class World {
       startYaw: p.yaw, curlIn: 0, curlN: 0, hit: false, plan: null, dynamic: false, dyn: false, high: false, jumped: false, commitTick: 0, bike: false,
     };
     p.flick = false; p.lunge = null; p.guard = false;
+    // удар из чеканки: игрок чеканил, когда начал удар (или мяч ещё в воздухе после его подбива)
+    p.kick.fromJuggle = !!p.juggle && p.juggle.n >= this.P.match.points.juggleMin; // хотя бы juggleMin подбивов подряд
     if (p.juggle) this._endJuggle(p);
     this.events.push({ type: 'kick_start', kind: type });
   }
@@ -1758,6 +1878,13 @@ export class World {
     k.mzHit = k.lastMz || 0;
     if (b.y <= P.ball.radius + 1e-3 && b.vy > 0) b.y = P.ball.radius + 2e-4;
     p.lastTouchTick = this.tick; p.lastKickTick = this.tick;
+    if (this.duel) {
+      // запись удара для бонусов за гол: каким ударом, откуда; по пути отмечается штанга, перекладина, рикошет
+      this.shot = {
+        pi: this.players.indexOf(p), kind: k.type, volley, jump: jumpKick, bike: !!k.bike, fly: !!k.fly, firstTime: !!k.dyn,
+        juggle: !!k.fromJuggle, dist: Math.hypot(k.gx - b.x, b.z), speed, post: 0, bar: 0, wall: 0, defl: false,
+      };
+    }
     k.phase = 'curl'; k.t = 0;
     const foot = p.feet[k.footSide > 0 ? 1 : 0];
     if (k.dyn && !k.bike) {

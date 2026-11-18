@@ -213,7 +213,7 @@ export class Room {
     const w = this.world;
     const base = {
       t: 'lobby', code: this.code, state: this.state, timer: Math.max(0, Math.round(this.timer)),
-      goals: w.goals, winner: w.winner, goalsToWin: w.P.match.goalsToWin, intro: !!this.intro && this.state === 'countdown',
+      goals: w.goals, points: w.points, winner: w.winner, goalsToWin: w.P.match.goalsToWin, duration: w.P.match.duration, intro: !!this.intro && this.state === 'countdown',
       players: this.slots.map((s) => (s ? { name: s.name, num: s.num, connected: s.connected, ready: s.ready, rematch: s.rematch } : null)),
     };
     const str = JSON.stringify(base);

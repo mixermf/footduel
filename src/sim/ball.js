@@ -138,7 +138,7 @@ export function stepBall(b, dt, P, events, bodyHook) {
               b.vx -= (1 + e) * vn * nx; b.vy -= (1 + e) * vn * ny;
               return -vn;
             });
-          if (hit > 0.3) events.push({ type: 'post', speed: hit });
+          if (hit > 0.3) events.push({ type: 'post', part: 'bar', speed: hit }); // перекладина
         }
       } else if (Math.abs(b.z) < gHalf && b.y < F.goalHeight && pxPrev <= gx - r + 1e-9 && b.x * sx > gx - r) {
         // щит песочницы закрывает створ

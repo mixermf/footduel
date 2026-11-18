@@ -441,6 +441,15 @@ export class GameScene {
     this.flash = flash; this.flashT = 1; this.scene.add(flash);
   }
 
+  // точка мира → пиксели экрана (null — за камерой)
+  toScreen(x, y, z) {
+    const v = this._scr || (this._scr = new THREE.Vector3());
+    v.set(x, y, z).project(this.camera);
+    if (v.z > 1) return null;
+    const r = this.renderer.domElement.getBoundingClientRect();
+    return { x: r.left + (v.x * 0.5 + 0.5) * r.width, y: r.top + (-v.y * 0.5 + 0.5) * r.height };
+  }
+
   contactFlash(x, y, z, strength) {
     this.flash.position.set(x, Math.max(0.02, y), z);
     this.flashT = 0; this.flashS = 0.6 + strength;

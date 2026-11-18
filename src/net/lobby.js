@@ -67,14 +67,14 @@ export class Lobby {
     switch (L.state) {
       case 'waiting': return { kind: 'room', code: L.code, players, text: 'Ждём соперника. Отправьте ему код или ссылку.', copied: now < this._copied };
       case 'loading': return { kind: 'room', code: L.code, players, text: 'Соперник в комнате. Загрузка…', copied: false };
-      case 'countdown': return { kind: 'count', n: Math.max(1, left), text: side, goalsToWin: L.goalsToWin,
+      case 'countdown': return { kind: 'count', n: Math.max(1, left), text: side, goalsToWin: L.goalsToWin, duration: L.duration,
         vs: L.intro && left > 2 ? L.players.map((p) => (p ? `${p.name} · ${p.num || ''}` : '')).join('   —   ') : '' };
       case 'paused': return { kind: 'msg', title: 'Соперник отключился', text: `Матч на паузе. Ждём возвращения: ${left} с.` };
       case 'over': {
-        const win = L.winner === s.me, mine = L.goals[s.me], theirs = L.goals[1 - s.me];
+        const win = L.winner === s.me, sc = L.points || L.goals, mine = sc[s.me], theirs = sc[1 - s.me];
         const me = players[s.me], other = players[1 - s.me];
         const note = !other ? 'Соперник вышел.' : me?.rematch ? 'Ждём согласия соперника…' : other.rematch ? 'Соперник хочет реванш.' : '';
-        return { kind: 'over', title: win ? 'Победа!' : 'Поражение', score: `${mine} : ${theirs}`, note, canRematch: !!other && !me?.rematch };
+        return { kind: 'over', title: L.winner < 0 ? 'Ничья' : win ? 'Победа!' : 'Поражение', score: `${mine} : ${theirs}` + (L.points ? ` · голы ${L.goals[s.me]} : ${L.goals[1 - s.me]}` : ''), note, canRematch: !!other && !me?.rematch };
       }
       default: return { kind: 'none' };
     }
@@ -131,8 +131,9 @@ export class Lobby {
       }, true), btn('Выйти', () => this.h.leave()));
     } else if (v.kind === 'count') {
       box.classList.add('count');
-      if (v.vs) box.append(el('p', 'net-vs', v.vs), el('p', '', `Матч до ${v.goalsToWin} голов.`));
-      else box.append(el('div', 'net-count', String(v.n)), el('p', '', v.text), el('p', '', `Матч до ${v.goalsToWin} голов.`));
+      const rule = v.duration ? `Матч ${Math.round(v.duration / 60)} минуты: побеждает тот, кто наберёт больше очков.` : `Матч до ${v.goalsToWin} голов.`;
+      if (v.vs) box.append(el('p', 'net-vs', v.vs), el('p', '', rule));
+      else box.append(el('div', 'net-count', String(v.n)), el('p', '', v.text), el('p', '', rule));
     } else if (v.kind === 'over') {
       box.append(el('h1', '', v.title), el('div', 'net-code', v.score), el('p', '', v.note));
       if (v.canRematch) row.append(btn('Реванш', () => this.h.rematch(), true));
