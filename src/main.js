@@ -60,6 +60,7 @@ hud.points.onTick = (n) => sfx.play('ui', n <= 3 ? 0.9 : 0.5);
 const pfx = new PointsFx(scene.scene);
 // имена в дуэли: из лобби в сети, «Вы» и «Бот» в матче с ботом
 function duelNames() {
+  if (game.shorts?.names) return game.shorts.names;
   const L = game.mode === 'online' ? game.net?.session.lobby : null;
   if (L) return [0, 1].map((i) => (L.players[i] ? L.players[i].name : '—'));
   return [lobby.name || 'Вы', 'Бот'];
@@ -170,6 +171,7 @@ function mainMenu() {
     botLevelItem('Матч с ботом', () => startBotMatch()),
     { label: 'Игра по сети: создать комнату', act: () => openLobby('create') },
     { label: 'Игра по сети: войти по коду', act: () => openLobby('join') },
+    ...(import.meta.env.DEV ? [{ label: 'Шортс-сцены (dev)', act: () => game.shortsDirector?.open() }] : []),
     ...settingsItems(),
     { label: 'Выход из игры', act: quitGame },
   ], CONTROLS);
@@ -233,22 +235,28 @@ function botMatchOver() {
   ]);
 }
 
+// sh — режиссёр шортс-сцен (только dev-сервер): ввод обоих игроков по сценарию, замедление через game.timeScale
 function stepBot(dtReal) {
-  if (game.state !== 'play' || !bot) return;
-  acc += dtReal;
+  const sh = game.shorts;
+  if (game.state !== 'play' || (!bot && !sh)) return;
+  acc += dtReal * (sh ? game.timeScale : 1);
   let simSteps = 0;
   while (acc >= simDt && simSteps < 16) {
     const t = prev; prev = cur; cur = t;
-    input.fill(frameIn, simSteps === 0);
-    world.step(frameIn, bot.think(world));
-    handleEvents(world.events, 0);
+    if (sh) { const io = sh.inputs(); world.step(io[0], io[1]); } else {
+      input.fill(frameIn, simSteps === 0);
+      world.step(frameIn, bot.think(world));
+    }
+    handleEvents(world.events, 0, sh ? sh.accept : null);
+    sh?.afterStep(world);
     world.snapshot(cur);
     acc -= simDt; simSteps++;
-    if (world.phase === 'over') break;
+    if (world.phase === 'over' && !sh) break;
   }
   if (simSteps > 0) input.endFrameEdges();
   if (simSteps === 16) acc = 0;
-  if (world.phase === 'over' && !botOver) {
+  if (sh?.needSync) { sh.needSync = false; world.snapshot(prev); world.snapshot(cur); acc = 0; } // сцена расставлена заново или начался повтор
+  if (world.phase === 'over' && !botOver && !sh) {
     stats.finish({ winner: vsBot.winner, points: vsBot.points, goals: vsBot.goals }, vsBot);
     botMatchOver();
   }
@@ -276,6 +284,7 @@ const lobby = new Lobby(document.getElementById('net'), {
 
 function pause(reason) {
   if (game.state !== 'play') return;
+  if (game.shorts) { game.shorts.exit(); return; } // шортс-сцены: Esc — выход в меню
   if (game.mode === 'online') {
     // сетевой матч не останавливается: меню открывается поверх, ввод игрока отпускается
     if (!game.net?.session.playing) return;
@@ -292,7 +301,7 @@ function pause(reason) {
   if (game.mode === 'bot') {
     game.state = 'pause';
     world.clearActions(); // удержанный удар не срабатывает после паузы
-    bot.reset();
+    bot?.reset();
     hud.openMenu('Пауза', reason || `Матч с ботом · очки ${vsBot.points[0]} : ${vsBot.points[1]}. Esc — продолжить.`, [
       { label: 'Продолжить', act: resume },
       botLevelItem('Начать заново', () => startBotMatch()),
@@ -329,6 +338,7 @@ function resume() {
 const AUTO_PAUSE = !(LAB_ENABLED && new URLSearchParams(location.search).get('autopause') === '0');
 function lostFocus(text) {
   input.releaseAll();
+  if (game.shorts) return; // шортс-сцена идёт по сценарию: переключение на программу записи её не прерывает
   if (game.mode === 'online') { if (game.net?.session.playing) game.net.session.neutral(); return; } // сетевой матч идёт дальше
   if (AUTO_PAUSE) pause(text);
 }
@@ -624,7 +634,7 @@ function runFrame(now) {
   view.bx = prev.bx + (cur.bx - prev.bx) * a + eb.x; view.bz = prev.bz + (cur.bz - prev.bz) * a + eb.z;
   view.by = Math.max(world.P.ball.radius, prev.by + (cur.by - prev.by) * a + eb.y);
 
-  const dtVis = running ? dtReal * (duo ? 1 : game.timeScale) : 0;
+  const dtVis = running ? dtReal * (duo && !game.shorts ? 1 : game.timeScale) : 0;
   const ball = { x: view.bx, y: view.by, z: view.bz };
   const P0 = world.players[0], P1 = world.players[1];
   const mine = world.players[sess && sess.me === 1 ? 1 : 0];
@@ -655,6 +665,7 @@ function runFrame(now) {
     if (duo && P1) rig2.update(view.p2, auxOf(P1), dtVis);
   }
   introWas = introOn;
+  game.shorts?.frame(dtReal, view); // шортс: своя камера (scene.cine), титры, замедление
   if (running) { stepSound(view, P0, 0); if (duo && P1) stepSound(view.p2, P1, 1); }
   scene.updateAim(mine.kick, world.P);
   // кольцо-таймер под игроком, который держит мяч: с порога предупреждения до штрафа
@@ -663,12 +674,12 @@ function runFrame(now) {
     const q = world.players[i], v = i === 0 ? view : view.p2, h = duo && q && world.phase === 'play' ? q.holdT || 0 : 0;
     pfx.holdRing(i, h >= HD.warn, v ? v.px : 0, v ? v.pz : 0, Math.max(0, (HD.grace - h) / (HD.grace - HD.warn)), h >= HD.grace);
   }
-  pfx.update(dtReal);
+  pfx.update(game.shorts ? dtVis : dtReal);
   scene.updateCamera(view.px, view.pz, view.yaw, dtReal);
   game.lab?.onFrame(dtReal);
   hud.update(dtReal, world, input, game.replay ? 'ПОВТОР' : game.timeScale !== 1 && !duo ? game.timeScale + '×' : '',
     online ? { me: sess ? Math.max(0, sess.me) : 0, lobby: sess?.lobby, rtt: sess?.rtt || 0, replayed: sess?.replayed || 0 }
-      : vsAI && bot ? { me: 0, title: 'Матч с ботом · ' + BOT_LEVELS[bot.level].label.toLowerCase(), lobby: { players: [{ name: lobby.name || 'Вы' }, { name: 'Бот' }] }, rtt: 0, replayed: 0 } : null);
+      : vsAI && (bot || game.shorts) ? { me: 0, title: bot ? 'Матч с ботом · ' + BOT_LEVELS[bot.level].label.toLowerCase() : '', lobby: { players: duelNames().map((name) => ({ name })) }, rtt: 0, replayed: 0 } : null);
   scene.render(dtReal);
 }
 
@@ -692,12 +703,31 @@ async function boot() {
     const { Lab } = await import('./lab/lab.js');
     game.lab = new Lab(game, document.getElementById('lab'));
   }
+  // Шортс-сцены для вертикальных видео — только dev-сервер: в сборку (и в сборку с лабораторией) код не попадает
+  if (import.meta.env.DEV) {
+    const { ShortsDirector } = await import('./shorts/director.js');
+    game.shortsDirector = new ShortsDirector(game, {
+      begin(d) {
+        if (game.net) { game.net.leave(); game.net = null; }
+        lobby.close(); hud.closeMenu();
+        setMode('bot');
+        bot = game.bot = null; botOver = false; clearTimeout(botMenuTimer);
+        hud.points.reset();
+        game.shorts = d;
+        input.suppressHeld();
+        game.state = 'play'; last = performance.now(); acc = 0;
+      },
+      leave() { game.shorts = null; game.timeScale = 1; mainMenu(); },
+    });
+  }
   loading.remove();
   initAnalytics();
   last = performance.now();
   const q = new URLSearchParams(location.search);
   const room = (q.get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
-  if (room) openLobby('join', room); // ссылка-приглашение
+  const short = import.meta.env.DEV ? q.get('short') || (q.get('shorts') ? '-' : '') : '';
+  if (short) game.shortsDirector.open(short === '-' ? undefined : short, false); // ?shorts=1 — панель сцен, ?short=bike — сразу сцена
+  else if (room) openLobby('join', room); // ссылка-приглашение
   else if (q.get('menu') === '0' && LAB_ENABLED) { game.state = 'play'; hud.showToast('Песочница · F1 — лаборатория', { ms: 1400 }); }
   else mainMenu();
   requestAnimationFrame(frame);

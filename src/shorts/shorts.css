@@ -1,0 +1,76 @@
+/* Шортс-сцены (dev): страница становится кадром 9:16 по центру окна. body с transform — опорный блок для всех
+   fixed-слоёв игры (холст, HUD), поэтому они укладываются в кадр, а не в окно. */
+html.shorts-on { background: #000; }
+html.shorts-on body {
+  width: min(100vw, calc(100vh * 9 / 16)); height: min(100vh, calc(100vw * 16 / 9));
+  margin: 0 auto; position: relative; transform: translateZ(0); overflow: visible; background: #0d1420;
+  --u: calc(min(100vh, 100vw * 16 / 9) / 100); /* 1% высоты кадра */
+}
+html.shorts-on #game { position: absolute; }
+html.shorts-on .hud-bars, html.shorts-on .hud-hint, html.shorts-on .hud-state, html.shorts-on #lab, html.shorts-on #net { display: none !important; }
+html.shorts-on #hud { overflow: hidden; }
+html.shorts-on .pts-board { top: calc(var(--u) * 1.6); transform: translateX(-50%) scale(0.92); transform-origin: top center; }
+html.shorts-on .pts-side { min-width: calc(var(--u) * 15); }
+html.shorts-on .pts-clock { white-space: nowrap; }
+html.shorts-on .hud-toast { display: none; } /* подсказки игры: в шортс сюжет ведут титры */
+html.shorts-on .pts-stack { top: 19%; }
+html.shorts-on .pts-head { font-size: calc(var(--u) * 6); }
+html.shorts-on .pts-line { font-size: calc(var(--u) * 2.6); }
+html.shorts-on .pts-total { font-size: calc(var(--u) * 5); }
+html.shorts-on .x3 .pts-total, html.shorts-on .x2 .pts-total { font-size: calc(var(--u) * 6.4); }
+html.shorts-on .pts-final { top: 83%; padding: calc(var(--u) * 1.4) calc(var(--u) * 3); }
+html.shorts-on .pts-final-h { font-size: calc(var(--u) * 6.5); }
+html.shorts-on .pts-final-s { font-size: calc(var(--u) * 2.2); white-space: nowrap; }
+html.shorts-on .pts-count { top: calc(var(--u) * 9); font-size: calc(var(--u) * 10); }
+
+/* титры */
+.sh-caps { position: absolute; inset: 0; pointer-events: none; z-index: 6; }
+.sh-cap {
+  position: absolute; left: 4%; right: 4%; text-align: center; font-weight: 900; letter-spacing: 0.02em; line-height: 1.05;
+  color: #fff; text-transform: uppercase; font-family: "Segoe UI Black", "Arial Black", "Segoe UI", system-ui, sans-serif;
+  -webkit-text-stroke: calc(var(--u) * 0.25) #000; paint-order: stroke fill;
+  text-shadow: 0 calc(var(--u) * 0.4) calc(var(--u) * 1.2) rgba(0, 0, 0, 0.85);
+  animation: shCapIn 220ms cubic-bezier(.2, 1.5, .4, 1) both;
+}
+.sh-cap.at-top { top: 12%; } .sh-cap.at-top2 { top: 20%; }
+.sh-cap.at-mid { top: 44%; } .sh-cap.at-low { top: 79%; }
+.sh-cap.sz-xl { font-size: calc(var(--u) * 6.4); }
+.sh-cap.sz-l { font-size: calc(var(--u) * 4.4); }
+.sh-cap.sz-m { font-size: calc(var(--u) * 2.9); text-transform: none; font-weight: 800; }
+@keyframes shCapIn { from { transform: scale(0.6); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* метка повтора и финальная карточка */
+.sh-badge {
+  position: absolute; top: calc(var(--u) * 9.5); left: calc(var(--u) * 2); z-index: 6; display: none; pointer-events: none;
+  font: 900 calc(var(--u) * 2.2) / 1 "Segoe UI", system-ui, sans-serif; letter-spacing: 0.12em; color: #fff;
+  background: #e5262b; padding: calc(var(--u) * 0.7) calc(var(--u) * 1.3); border-radius: calc(var(--u) * 0.6);
+}
+.sh-badge.on { display: block; animation: shBlink 1s steps(2) infinite; }
+@keyframes shBlink { 50% { opacity: 0.75; } }
+.sh-end {
+  position: absolute; inset: 0; z-index: 7; display: none; flex-direction: column; align-items: center; justify-content: center; gap: calc(var(--u) * 1.4);
+  background: radial-gradient(ellipse at center, rgba(6, 10, 16, 0.55), rgba(6, 10, 16, 0.85)); pointer-events: none; text-align: center; padding: 0 6%;
+}
+.sh-end.on { display: flex; animation: shFade 300ms ease-out both; }
+.sh-end-h { font: 900 calc(var(--u) * 5.6) / 1.05 "Segoe UI Black", "Arial Black", system-ui, sans-serif; color: #ffd34d; text-transform: uppercase; text-shadow: 0 0 calc(var(--u) * 3) rgba(255, 211, 77, 0.45); animation: shCapIn 360ms cubic-bezier(.2, 1.5, .4, 1) both; }
+.sh-end-s { font: 800 calc(var(--u) * 2.8) / 1.2 "Segoe UI", system-ui, sans-serif; color: #fff; }
+.sh-end-tag { margin-top: calc(var(--u) * 3); font: 900 calc(var(--u) * 2) / 1 "Segoe UI", system-ui, sans-serif; letter-spacing: 0.4em; color: #9fb0c6; }
+@keyframes shFade { from { opacity: 0; } to { opacity: 1; } }
+
+/* панель выбора — справа от кадра, в запись не попадает */
+.sh-panel {
+  position: absolute; top: 12px; left: calc(100% + 16px); width: 300px; z-index: 30; background: rgba(12, 18, 28, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 12px; padding: 12px 14px; font-size: 13px; color: #eef3fa;
+}
+.sh-panel.hidden { display: none; }
+@media (max-aspect-ratio: 3/4) { .sh-panel { left: auto; right: 8px; top: auto; bottom: 8px; } }
+.sh-panel h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #ffd34d; }
+.sh-list { display: grid; gap: 4px; margin-bottom: 10px; }
+.sh-panel button { background: rgba(255, 255, 255, 0.07); color: inherit; border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 8px; padding: 7px 10px; font: inherit; cursor: pointer; text-align: left; }
+.sh-panel button.primary { border-color: #ffd34d; color: #ffd34d; }
+.sh-item.sel { border-color: #ffd34d; background: rgba(255, 211, 77, 0.12); }
+.sh-item em { float: right; font-style: normal; color: #9fb0c6; }
+.sh-row { display: flex; gap: 6px; margin-bottom: 8px; }
+.sh-opts { display: grid; gap: 4px; margin-bottom: 8px; color: #9fb0c6; }
+.sh-status { min-height: 18px; color: #ffd34d; font-weight: 700; margin-bottom: 6px; }
+.sh-help { color: #9fb0c6; font-size: 11.5px; line-height: 1.45; }
