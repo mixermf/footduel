@@ -111,6 +111,7 @@ export class ShortsDirector {
     this.runner = new ShortRunner(w, s);
     this.rec = []; this.saved = new Map(); this.replayIx = -1; this.goalT = null;
     this._saveIfNeeded(w);
+    g.rig.resetMotion(); g.rig2.resetMotion(); // поза — с первого кадра сцены, без хвоста прошлой
     this.phase = 'ready'; this.phaseT = 0; this.ts = 0; g.timeScale = 0;
     this.cam = null; this.shot = null;
     g.rig.setBack(this.names[0], 10); g.rig2.setBack(this.names[1], 7);
@@ -190,6 +191,7 @@ export class ShortsDirector {
     const st = Math.round(rp.from / g.world.dt), snap = this.saved.get(st);
     if (!snap) { this._outro(); return; }
     g.world.loadState(JSON.parse(snap));
+    g.rig.resetMotion(); g.rig2.resetMotion();
     this.runner.step = st;
     this.phase = 'replay'; this.phaseT = 0;
     this.cam = null; this.shot = null;

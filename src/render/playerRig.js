@@ -117,6 +117,16 @@ export class PlayerRig {
   // празднование гола: руки и корпус из клипа, пока игрок не начал удар
   celebrate() { this._cel = 0; }
 
+  // Сброс сглаживания позы: после скачка мира (новая сцена, повтор с середины) следующий кадр ставит позу сразу,
+  // а не доводит её пружинами из позы прошлой сцены
+  resetMotion() {
+    this.sp = {}; this._wasAir = false; this.pose = new PoseBlend(); this._gp = 0; this._kc = 0; this._kOn = false; this._kDyn = false; this._kCharge = 0;
+    this._pv = { x: 0, z: 0 }; this._acc = { f: 0, r: 0 }; this._pelvisY = null; this._kClip = CLIPS.kick; this._kPack = false; this._cel = null;
+    this._kLeg = false; this._kH = 0.11; this._kSideA = 0; this._kp = {}; this._prevYaw = undefined; this._armW = null; this._fallSide = 0;
+    if (this.ready) this._grip(0);
+    for (const L of this.legs || []) { L.pole = null; L.pitch = 0; L.kw = 0; L.bw = 0; L.kDyn = false; }
+  }
+
   async load(scene, targetHeight) {
     const gltf = await new GLTFLoader().loadAsync(modelUrl);
     const model = gltf.scene;
@@ -420,7 +430,9 @@ export class PlayerRig {
     if (!s) s = this.sp[name] = { x: target, v: 0 };
     if (dt <= 0) return s.x;
     if (dt > 0.05) { s.x = target; s.v = 0; return s.x; }
-    const w = 2 * Math.PI * hz, n = dt > 0.012 ? 2 : 1, h = dt / n;
+    // подшаги по устойчивости: явная схема расходится при w·h около 0,9 (таз жёсткой пружины 14 Гц раскачивался
+    // до бесконечности при шаге кадра 0,01 с — 100 Гц монитора или замедление), поэтому w·h не больше 0,5
+    const w = 2 * Math.PI * hz, n = Math.max(1, Math.ceil(w * dt / 0.5)), h = dt / n;
     for (let i = 0; i < n; i++) { s.v += (w * w * (target - s.x) - 2 * zeta * w * s.v) * h; s.x += s.v * h; }
     return s.x;
   }
@@ -715,8 +727,9 @@ export class PlayerRig {
         h += (g.type === 'foot' ? 0.13 : 0.05) * gw;
         if (g.type === 'cushion') yaw += (i ? 1 : -1) * 1.0 * gw;
       }
-      // через себя: свободная нога тоже идёт вверх — «ножницы»
-      if (bk > 0.01 && !fl && !(kicking && (kickSide > 0) === (i === 1))) { h += 0.5 * bk; x += f.x * 0.3 * bk; z += f.z * 0.3 * bk; }
+      // через себя: свободная нога тоже идёт вверх — «ножницы». Только стопа, оторванная от покрытия: опорную, пока
+      // игрок ещё стоит на ней в замахе, это правило задирало к тазу (колено выше таза, при отрыве — скачок на 60°)
+      if (bk > 0.01 && !fl && !ft.planted && !(kicking && (kickSide > 0) === (i === 1))) { h += 0.5 * bk; x += f.x * 0.3 * bk; z += f.z * 0.3 * bk; }
       // в прыжке свободная нога поджимается, а не висит
       if (air && sl < 0.05 && !fl && !(kicking && (kickSide > 0) === (i === 1))) {
         const tuck = 1 - jU * jU; // the height of the feet comes from the sim; here only the fore-aft split at the top
@@ -830,7 +843,8 @@ export class PlayerRig {
       const isKickFoot = kicking && ((kick.footSide > 0) === (i === 1));
       const behind = fo[i] < 0;
       L.up.getWorldPosition(H);
-      const dmax = (L.l1 + L.l2) * 0.999, dmin = Math.abs(L.l1 - L.l2) + 0.02;
+      // dmin — колено сгибается не больше чем на 150° (угол между бедром и голенью не меньше 30°): дальше — уже сквозь ногу
+      const dmax = (L.l1 + L.l2) * 0.999, dmin = Math.sqrt(L.l1 * L.l1 + L.l2 * L.l2 - 2 * L.l1 * L.l2 * Math.cos(0.52));
       let pitch; // > 0 — пятка вверх (носок вниз), < 0 — носок на себя
       if (ft.planted) {
         pitch = 0;
@@ -867,6 +881,7 @@ export class PlayerRig {
       const kClip = this._kClip;
       if (this.adapt.kickLeg && this._kLeg && kClip.feet && (this._kSide > 0) === (i === 1)) {
         // в удар нога входит быстро, а из проводки на покрытие опускается плавно — иначе стопа падает рывком
+        if (!this.sp.kLeg) this.sp.kLeg = { x: 0, v: 0 }; // первый удар (после запуска или сброса) входит из нуля, а не скачком
         legK = clamp(this._spring('kLeg', this._kOn ? 1 : 0, this._kOn ? 9 : 2.5, 1, dt), 0, 1);
         if (legK > 0.01) {
           const ad = this.adapt, kcNow = this._kc, sm = (x) => { const y = clamp(x, 0, 1); return y * y * (3 - 2 * y); };
@@ -902,7 +917,7 @@ export class PlayerRig {
       let dist = v.length();
       this.diag.reachErr[i] = Math.max(0, dist - dmax);
       if (dist > dmax) { A.copy(H).addScaledVector(v, dmax / dist); dist = dmax; }
-      if (dist < dmin) dist = dmin;
+      if (dist < dmin) { if (dist > 1e-4) A.copy(H).addScaledVector(v, dmin / dist); dist = dmin; } // стопа не подтягивается к тазу ближе предела сгиба
       dir.subVectors(A, H).normalize();
       bend.copy(ff).multiplyScalar(0.5).addScaledVector(f, 0.5).addScaledVector(r, L.side * 0.12);
       if (tilted) bend.applyQuaternion(bodyQ); // «вперёд» для колена — по корпусу, а корпус наклонён
@@ -921,19 +936,46 @@ export class PlayerRig {
         if (cA.lengthSq() > 0.02) bend.normalize().lerp(cA.normalize(), kw * Math.min(1, (KP.high - 0.2) * 2));
       }
       // колено бьющей ноги смотрит туда же, куда бедро в клипе
-      if (legK > 0.01) bend.multiplyScalar(1 - 0.9 * legK).addScaledVector(cA.copy(L.restDir).applyQuaternion(_q.copy(yawQ).multiply(pose.get(L.name + 'UpLeg'))), 2 * legK);
-      bend.addScaledVector(dir, -bend.dot(dir)).normalize();
+      // Направление колена задаёт только часть бедра поперёк линии бедро — стопа. Когда нога в клипе почти прямая, этой
+      // части почти нет и её направление случайно (колено разворачивалось на 77° за кадр после навеса) — тогда клип не берётся
+      if (legK > 0.01) {
+        cA.copy(L.restDir).applyQuaternion(_q.copy(yawQ).multiply(pose.get(L.name + 'UpLeg')));
+        cA.addScaledVector(dir, -cA.dot(dir));
+        const m = cA.length(), wC = legK * sm01((m - 0.05) / 0.15);
+        if (wC > 0.01) bend.multiplyScalar(1 - 0.9 * wC).addScaledVector(cA, 2 * wC / m);
+      }
+      // длина подсказки до нормировки: слагаемые (поза удара, клип, правило удара с лёта) иногда почти гасят друг друга,
+      // и направление короткого вектора случайно — такой подсказке колено почти не следует (иначе скачок на 50° за кадр)
+      bend.addScaledVector(dir, -bend.dot(dir));
+      let hintLen = bend.length();
+      bend.normalize();
       // анатомия колена: оно сгибается только вперёд-вверх относительно корпуса и не перескакивает за кадр.
       // Какой бы ни была подсказка (клип, удар, шаг), колено позади линии бедро — стопа не допускается.
       // the remembered knee direction turns with the body: otherwise a fast spin leaves it behind and the knee pops
+      // Удар через себя и падение на спину: тело перевёрнуто, «вперёд» и «вниз» мира для колена ничего не значат.
+      // Колено лежит в плоскости таза и повёрнуто от линии бедро — стопа на 90° к груди: нога висит — колено вперёд,
+      // нога поднята перед собой — колено к голове, нога позади — колено вниз-вперёд. Направление непрерывно при любом
+      // махе ноги, поэтому не перескакивает (раньше подсказка в осях мира гнула колено назад и разворачивала его за кадр)
+      const sag = (fl && !sideFall) || (kicking && kick.bike);
+      if (sag) {
+        const Rb = cA.copy(r); if (tilted) Rb.applyQuaternion(bodyQ);
+        const Ub = corr.copy(UP); if (tilted) Ub.applyQuaternion(bodyQ);
+        const Fb = knee.copy(f); if (tilted) Fb.applyQuaternion(bodyQ);
+        const s = v.crossVectors(Rb, Ub).dot(Fb) > 0 ? -1 : 1; // знак, при котором висящая нога (dir = −Ub) даёт колено вперёд (Fb)
+        bend.crossVectors(Rb, dir).multiplyScalar(s).addScaledVector(Rb, L.side * 0.1);
+        bend.addScaledVector(dir, -bend.dot(dir));
+        if (bend.lengthSq() < 1e-6) bend.copy(Fb);
+        bend.normalize();
+        hintLen = 1;
+      }
       if (L.pole && dYaw) L.pole.applyAxisAngle(UP, -dYaw);
-      if (L.pole && dt > 0) { bend.lerpVectors(L.pole, bend, Math.min(1, this.adapt.kneeRate * dt)); bend.addScaledVector(dir, -bend.dot(dir)).normalize(); }
+      if (L.pole && dt > 0) { bend.lerpVectors(L.pole, bend, Math.min(1, this.adapt.kneeRate * dt * (0.15 + 0.85 * sm01((hintLen - 0.1) / 0.4)))); bend.addScaledVector(dir, -bend.dot(dir)).normalize(); }
       // a leg stretched out behind the body (flight, landing on the other leg) can only bend with the knee below the
       // hip-ankle line; the usual 'forward and up' rule would flip it there
-      const fB = tilted ? cA.copy(f).applyQuaternion(bodyQ) : f, backw = L.bw = (L.bw || 0) + ((fl ? clamp(-dir.dot(fB) * 1.5, 0, 1) : 0) - (L.bw || 0)) * (dt > 0 ? Math.min(1, 12 * dt) : 1); // eased: no knee pop when the leg comes back under the body
+      const fB = tilted ? cA.copy(f).applyQuaternion(bodyQ) : f, backw = L.bw = (L.bw || 0) + ((fl && !sag ? clamp(-dir.dot(fB) * 1.5, 0, 1) : 0) - (L.bw || 0)) * (dt > 0 ? Math.min(1, 12 * dt) : 1); // eased: no knee pop when the leg comes back under the body
       if (backw > 0) bend.addScaledVector(UP, -1.2 * backw).addScaledVector(dir, 0).addScaledVector(dir, -bend.dot(dir)).normalize();
       hinge.copy(f).addScaledVector(UP, 0.6 - 1.8 * backw); if (tilted) hinge.applyQuaternion(bodyQ); hinge.addScaledVector(dir, -hinge.dot(dir));
-      if (hinge.lengthSq() > 1e-6) {
+      if (hinge.lengthSq() > 1e-6 && !sag) {
         // предел — после сглаживания: он жёсткий, сглаживание не может оставить колено позади
         hinge.normalize();
         // у ноги, отведённой в сторону для удара с лёта, колено смотрит наружу — предел для неё только «не назад»
