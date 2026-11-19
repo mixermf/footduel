@@ -124,6 +124,18 @@ first-person viewmodels. Numbers are measured unless marked **(estimate)**.
 - **Hit-stops freeze just short of the contact.** Anything keyed to "time ≥ contact" fires on the first frame
   after the freeze and snaps (a fist jumped 0.4 m in one frame). Capture the pose shown during the freeze and
   blend from it.
+- **Limit the ankle (and wrist) against its own limb, not the world.** A foot posed in world axes ("flat to the
+  ground, pitched") or copied from a clip knows nothing about the shin: once the body inverts (bicycle kick,
+  dive, fall) it bends back 55° toward the shin, overpoints to 90° or twists 70° out of the knee plane. After
+  the leg IK, measure the toe direction in the shin frame (shin line, knee hinge axis, their cross) and clamp
+  flexion to roughly −35…+55° from "flat foot under a vertical shin" and twist to ±10–20°, turning the foot by
+  the shortest rotation of the toe. In flight, narrow the range to a relaxed, slightly pointed foot. Leave
+  feet in ground contact alone. Three traps, each measured as a one-frame pop: (1) the flexion angle is
+  circular; when the source foot points behind the shin, a plain clamp flips between the two bounds across
+  ±180° (67° in one frame), so keep the bound the foot left through until it returns to range; (2) state
+  switches (swing → planted at a take-off) toggle the limit's weight; ease the weight in time, faster on than
+  off (a 46° pop dropped to under 30°); (3) eased weights carry stale values across replay cuts; snap them on
+  reset. Probe: per-frame flexion, twist and toe-direction change minus shin change, per scene.
 - **Swung limbs in polar terms around the shoulder:** slerp the direction from where the clip left the hand to
   the target and change the distance one way only, so the elbow opens or closes once.
 

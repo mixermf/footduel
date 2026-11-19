@@ -13,6 +13,7 @@ const BONE_SET = new Set(BONES);
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion();
+const _q4 = new THREE.Quaternion(), _qI = new THREE.Quaternion(), _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), _v4 = new THREE.Vector3();
 const _x = new THREE.Vector3(), _z = new THREE.Vector3();
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const angDiff = (a, b) => { let d = (a - b) % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2; return d; };
@@ -124,7 +125,7 @@ export class PlayerRig {
     this._pv = { x: 0, z: 0 }; this._acc = { f: 0, r: 0 }; this._pelvisY = null; this._kClip = CLIPS.kick; this._kPack = false; this._cel = null;
     this._kLeg = false; this._kH = 0.11; this._kSideA = 0; this._kp = {}; this._prevYaw = undefined; this._armW = null; this._fallSide = 0;
     if (this.ready) this._grip(0);
-    for (const L of this.legs || []) { L.pole = null; L.pitch = 0; L.kw = 0; L.bw = 0; L.kDyn = false; }
+    for (const L of this.legs || []) { L.pole = null; L.pitch = 0; L.kw = 0; L.bw = 0; L.kDyn = false; L.aw = null; L.lw = null; L.ankSide = 0; }
   }
 
   async load(scene, targetHeight) {
@@ -185,8 +186,12 @@ export class PlayerRig {
         l1: R[n + 'Leg'].p.distanceTo(R[n + 'UpLeg'].p), l2: R[n + 'Foot'].p.distanceTo(R[n + 'Leg'].p),
         pitch: 0, ankleH: R[n + 'Foot'].p.y, toe: B[n + 'ToeBase'], toeH: R[n + 'ToeBase'].p.y,
         toeFwd: (R[n + 'ToeBase'].p.x - R[n + 'Foot'].p.x) * F0.x + (R[n + 'ToeBase'].p.z - R[n + 'Foot'].p.z) * F0.z,
+        // голеностоп: направление на носок в покое и его угол к голени — от него считается подъём стопы
+        toeRest: R[n + 'ToeBase'].p.clone().sub(R[n + 'Foot'].p).normalize(), footRestInv: R[n + 'Foot'].q.clone().invert(),
       };
     });
+    // покой голеностопа — стопа ровно на покрытии под вертикальной голенью (в позе покоя модели нога стоит иначе)
+    for (const L of this.legs) L.ankle0 = Math.PI / 2 - Math.acos(clamp(-L.toeRest.y, -1, 1));
     this.arms = [-1, 1].map((side) => {
       const n = side < 0 ? 'Left' : 'Right';
       return { side, upper: limb(n + 'Arm', n + 'ForeArm', armAxis), fore: limb(n + 'ForeArm', n + 'Hand', armAxis) };
@@ -912,7 +917,25 @@ export class PlayerRig {
           clipFootQ.copy(yawQ).multiply(pose.get(L.name + 'Foot')).multiply(L.footRest);
         }
       }
-      const putFoot = (q) => { if (legK > 0.01) q.slerp(clipFootQ, legK); setWorldQuat(L.foot, q); };
+      // Голеностоп. Стопа ставится в осях поля (ровно, с наклоном pitch) или по клипу — и то и другое ничего не знает
+      // о голени: у перевёрнутого в ударе через себя тела стопа выламывалась к голени на 55°, в ударе с лёта — оттягивалась
+      // на 90° и скручивалась вбок на 70°. В воздухе и в махе ноги стопа ограничена живым ходом голеностопа относительно
+      // голени; на весу в полёте она расслаблена — носок слегка оттянут. Опорная стопа лежит на покрытии и не трогается;
+      // предел входит и выходит плавно (окно маха, вес полёта и удара), поэтому стопа не перескакивает
+      const flying = air || (!!fl && fl.phase === 'air') || (kicking && kick.bike) ? 1 : 0;
+      const aw = L.aw = L.aw == null ? flying : L.aw + (flying - L.aw) * (dt > 0 ? Math.min(1, 10 * dt) : 1); // после склейки — сразу по позе
+      const putFoot = (q) => {
+        // вес предела меняется плавно: на отрыве в удар с лёта симуляция ставит стопу в опору посреди маха, и предел
+        // выключался за кадр (стопа поворачивалась на 46°)
+        const lwT = ft.planted ? aw : Math.max(aw, sm01(ft.u / 0.2) * sm01((1 - ft.u) / 0.2), L.kw || 0), kw = L.kw || 0;
+        const limW = L.lw = L.lw == null ? lwT : L.lw + (lwT - L.lw) * (dt > 0 ? Math.min(1, (lwT > L.lw ? 12 : 5) * dt) : 1);
+        if (legK > 0.01) q.slerp(clipFootQ, legK);
+        if (limW > 0.01) {
+          const lo = -0.6 + (0.1 + 0.6) * aw, hi = 1.0 - 0.15 * aw, tw = 0.4 - 0.2 * Math.max(aw, kw);
+          this._ankleLimit(L, q, knee, A, axis, lo + (-0.25 - lo) * kw, hi + (0.95 - hi) * kw, tw, limW);
+        }
+        setWorldQuat(L.foot, q);
+      };
       v.subVectors(A, H);
       let dist = v.length();
       this.diag.reachErr[i] = Math.max(0, dist - dmax);
@@ -1090,6 +1113,28 @@ export class PlayerRig {
     // поворот к мячу: вокруг вертикали (в осях сцены положительный угол рыскания — по часовой сверху)
     const headExtra = new THREE.Quaternion().setFromAxisAngle(UP, -look).multiply(_q.setFromAxisAngle(r, -(lookPitch + leanF * 0.5) + (g && g.type === 'head' ? 0.35 * gw : 0))).multiply(_q2.setFromAxisAngle(f, -leanS * 0.5));
     world('Head', headExtra, curl[4]);
+  }
+
+  // Предел голеностопа относительно голени: подъём стопы (от положения покоя; > 0 — носок оттянут) в [lo, hi], скрут
+  // носка из плоскости сгиба колена — не больше tw (рад). Стопа доворачивается кратчайшим поворотом носка, с весом w.
+  _ankleLimit(L, q, knee, A, axis, lo, hi, tw, w) {
+    const s = _v1.subVectors(A, knee).normalize(), n = _v2.crossVectors(s, axis).normalize();
+    const t = _v3.copy(L.toeRest).applyQuaternion(_q4.copy(q).multiply(L.footRestInv));
+    const tAx = clamp(t.dot(axis), -1, 1), twist = Math.asin(tAx);
+    // угол стопы — по кругу: исходная стопа (ровно к полю у перевёрнутого тела) может смотреть назад, и простой предел
+    // перебрасывал её через ±180° с «носок оттянут» на «носок на себя» (скачок 67° за кадр). Вне хода стопа держится
+    // у той границы, через которую вышла, пока не вернётся в ход
+    const PI2 = Math.PI * 2, span = hi - lo;
+    let th = Math.atan2(t.dot(s), t.dot(n)) - L.ankle0, dd = (((th - lo) % PI2) + PI2) % PI2, th2;
+    if (dd <= span) { th = th2 = lo + dd; L.ankSide = dd > span / 2 ? 1 : -1; }
+    else { th = lo + dd; th2 = (L.ankSide || (dd - span < PI2 - dd ? 1 : -1)) > 0 ? hi : lo; }
+    const tw2 = clamp(twist, -tw, tw);
+    if (th2 === th && tw2 === twist) return q;
+    const c = Math.cos(tw2), a = th2 + L.ankle0;
+    const t2 = _v4.copy(n).multiplyScalar(c * Math.cos(a)).addScaledVector(s, c * Math.sin(a)).addScaledVector(axis, Math.sin(tw2));
+    _q4.setFromUnitVectors(t, t2.normalize());
+    if (w < 1) _q4.slerp(_qI, 1 - w);
+    return q.premultiply(_q4);
   }
 
   // Положение голеностопа при наклоне стопы: pitch > 0 — вокруг подушечки (пятка вверх),
