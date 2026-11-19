@@ -197,9 +197,11 @@ export class GameScene {
     // гирлянда лампочек вдоль дальней стороны
     const bulbGeo = new THREE.SphereGeometry(0.05, 8, 6), cols = [0xfff2c8, 0xfff2c8, 0xfff2c8, 0xfff2c8];
     const span = 6, y0 = 3.6;
+    this.bulbs = []; // у каждой лампочки свой материал: на голе по ним бежит огонь (src/render/ledBoards.js)
     for (let x0 = -L / 2, n = 0; x0 < L / 2 - 0.1; x0 += span) for (let k = 1; k < 10; k++, n++) {
       const u = k / 10, b = new THREE.Mesh(bulbGeo, new THREE.MeshBasicMaterial({ color: cols[n & 3] }));
       b.position.set(x0 + u * span, y0 - 0.5 * Math.sin(Math.PI * u), -W / 2 + 0.06); s.add(b);
+      this.bulbs.push(b);
     }
   }
 

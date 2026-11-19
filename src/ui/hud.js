@@ -17,8 +17,10 @@ export class Hud {
     this.menu = null;
   }
 
+  // Служебное сообщение. Со стикерами (src/ui/stickers.js): крупное — стикер «вау», обычное — тихая заметка снизу.
   showToast(text, { big = false, ms = 900 } = {}) {
     if (this.points && this.points.busy && !big) return; // идёт разбор очков за гол: мелкие подсказки его не перекрывают
+    if (this.stickers) { if (big) this.stickers.big(text); else this.stickers.note(text, Math.max(ms, 900)); return; }
     this.toast.textContent = text;
     this.toast.className = 'hud-toast show' + (big ? ' big' : '');
     this._toastT = ms / 1000;
@@ -73,6 +75,7 @@ export class Hud {
         + ` · ${h('pause')} пауза`
         + (input.lastDevice === 'keyboard' && !net ? ' · <kbd>R</kbd> мяч · <kbd>F</kbd> подача · <kbd>G</kbd> щит' : '');
     }
+    this.stickers?.update(dt);
     if (this._toastT > 0) { this._toastT -= dt; if (this._toastT <= 0) this.toast.classList.remove('show'); }
   }
 

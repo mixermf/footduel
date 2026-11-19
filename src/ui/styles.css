@@ -92,20 +92,31 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1420; col
 .pts-count.on { animation: ptsDrop 300ms ease-out forwards; }
 .pts-stack { position: absolute; top: 20%; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 2px; text-shadow: 0 3px 14px rgba(0, 0, 0, 0.75); pointer-events: none; transition: opacity 250ms; }
 .pts-stack.out { opacity: 0; }
-.pts-head { font-size: 56px; font-weight: 800; letter-spacing: 0.04em; animation: ptsIn 260ms cubic-bezier(.2, 1.4, .4, 1) both; }
-.pts-line { font-size: 22px; font-weight: 700; color: var(--accent); animation: ptsIn 260ms cubic-bezier(.2, 1.4, .4, 1) both; }
-.pts-total { font-size: 44px; font-weight: 800; animation: ptsIn 260ms cubic-bezier(.2, 1.4, .4, 1) both; font-variant-numeric: tabular-nums; }
-.x2 .pts-total { font-size: 56px; text-shadow: 0 0 18px #ffd34d; }
-.x3 .pts-total { font-size: 72px; text-shadow: 0 0 26px #ffd34d; }
-.pts-total[data-tag]::after { content: attr(data-tag); display: block; text-align: center; font-size: 20px; letter-spacing: 0.3em; color: #fff; }
-.pts-fly { position: fixed; z-index: 5; font-weight: 800; pointer-events: none; transition: transform 450ms cubic-bezier(.5, 0, .8, .4), opacity 450ms; text-shadow: 0 3px 14px rgba(0, 0, 0, 0.75); }
+/* разбор гола: шапка-стикер со шлепком, строки бонусов — капсулы, влетающие с боков, итог-«одометр» с бликом */
+.pts-head { font-size: 64px; letter-spacing: 0.03em; transform: rotate(-3deg) skewX(-6deg); animation: ptsSlam 420ms cubic-bezier(.2, 1.3, .4, 1) both; position: relative; }
+.pts-line { display: flex; align-items: center; gap: 10px; font-size: 20px; margin: 1px 0; padding: 3px 6px 3px 14px; background: linear-gradient(90deg, rgba(8, 12, 22, 0.9), rgba(20, 28, 46, 0.86)); border: 2px solid rgba(255, 211, 77, 0.55); border-radius: 6px; transform: skewX(-10deg); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.45); animation: ptsLineR 300ms cubic-bezier(.2, 1.3, .4, 1) both; text-shadow: none; }
+.pts-line.l { animation-name: ptsLineL; }
+.pts-line .pts-lbl { font: italic 900 1em/1.1 Impact, "Arial Black", "Segoe UI Black", sans-serif; text-transform: uppercase; letter-spacing: 0.04em; color: #fff; }
+.pts-line .pts-val { font: 900 1em/1.1 Impact, "Arial Black", sans-serif; color: #1a1200; background: linear-gradient(180deg, #fff6b0, #ffc21a 55%, #ff9a00); border-radius: 4px; padding: 1px 8px; font-variant-numeric: tabular-nums; }
+.pts-line.more { border-color: rgba(255, 255, 255, 0.25); }
+.pts-total { font-size: 48px; margin-top: 4px; font-variant-numeric: tabular-nums; transform: rotate(-2deg) skewX(-6deg); animation: ptsSlam 300ms cubic-bezier(.2, 1.3, .4, 1) both; }
+.pts-total.done { animation: ptsTotalHit 360ms cubic-bezier(.2, 1.6, .4, 1) both; }
+.pts-total.done::after { background-image: linear-gradient(105deg, transparent 40%, rgba(255, 255, 255, 0.95) 50%, transparent 60%), var(--grad); background-size: 300% 100%, 100% 100%; background-repeat: no-repeat; animation: ptsShine 520ms ease-out both; }
+.x2 .pts-total { font-size: 62px; }
+.x3 .pts-total { font-size: 80px; }
+.pts-tag { font: italic 900 20px/1 Impact, "Arial Black", sans-serif; letter-spacing: 0.3em; color: #1a1200; background: linear-gradient(90deg, #ffe066, #ffb300); padding: 4px 14px; border-radius: 4px; transform: skewX(-12deg); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.5); animation: ptsSlam 300ms cubic-bezier(.2, 1.3, .4, 1) both; }
+.pts-fly { position: fixed; z-index: 5; pointer-events: none; transform: translate(0, 0); }
+.pts-fly.ghost { opacity: 0.35; }
+.pts-side.hit { animation: ptsSideHit 600ms ease-out; }
+.pts-side.hit.gold { animation: ptsSideGold 1100ms ease-out; }
 .pts-flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
 .pts-flash.on { animation: ptsFlash 180ms ease-out; }
 .pts-flash.gold { background: #ffd34d; }
-.pts-float { position: absolute; transform: translate(-50%, -50%); font-size: 26px; font-weight: 800; color: #ff6b6b; -webkit-text-stroke: 1px #000; pointer-events: none; animation: ptsFloat 900ms ease-out forwards; }
+.pts-float { position: absolute; transform: translate(-50%, -50%); font-size: 30px; pointer-events: none; animation: ptsFloat 900ms ease-out forwards; }
 .pts-final { position: absolute; top: 34%; left: 50%; transform: translate(-50%, -50%); display: none; text-align: center; background: var(--panel); border: 3px solid var(--win, #ffd34d); border-radius: 16px; padding: 14px 34px; z-index: 4; pointer-events: none; }
 .pts-final.on { display: block; animation: ptsBanner 500ms cubic-bezier(.2, 1.5, .4, 1) both; }
-.pts-final-h { font-size: 72px; font-weight: 800; color: var(--win, #ffd34d); letter-spacing: 0.04em; }
+.pts-final { overflow: visible; box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.5), 0 0 40px color-mix(in srgb, var(--win, #ffd34d) 45%, transparent); }
+.pts-final-h { font-size: 84px; letter-spacing: 0.03em; display: inline-block; transform: rotate(-3deg) skewX(-6deg); }
 .pts-final-s { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
 @keyframes ptsIn { from { transform: translateY(12px) scale(.8); opacity: 0; filter: blur(3px); } to { transform: none; opacity: 1; filter: blur(0); } }
 @keyframes ptsBump { from { transform: scale(1.4); color: #fff; } to { transform: scale(1); } }
@@ -117,7 +128,52 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1420; col
 @keyframes ptsFlash { from { opacity: 0.35; } to { opacity: 0; } }
 @keyframes ptsFloat { 0% { transform: translate(-50%, -50%) scale(1.3); opacity: 1; } 60% { opacity: 1; } 100% { transform: translate(-50%, calc(-50% - 60px)) scale(1); opacity: 0; } }
 @keyframes ptsBanner { from { transform: translate(-50%, -50%) scale(.6) rotate(-4deg); opacity: 0; } to { transform: translate(-50%, -50%) scale(1) rotate(0); opacity: 1; } }
+@keyframes ptsSlam { 0% { scale: 2.4; opacity: 0; rotate: -8deg; } 55% { scale: 0.92; opacity: 1; rotate: 0deg; } 78% { scale: 1.06; } 100% { scale: 1; opacity: 1; } }
+@keyframes ptsLineR { 0% { translate: 140% 0; opacity: 0; } 60% { translate: -6% 0; opacity: 1; } 100% { translate: 0 0; opacity: 1; } }
+@keyframes ptsLineL { 0% { translate: -140% 0; opacity: 0; } 60% { translate: 6% 0; opacity: 1; } 100% { translate: 0 0; opacity: 1; } }
+@keyframes ptsTotalHit { 0% { scale: 1.35; } 100% { scale: 1; } }
+@keyframes ptsShine { from { background-position: 120% 0, 0 0; } to { background-position: -20% 0, 0 0; } }
+@keyframes ptsSideHit { 0% { scale: 1.12; box-shadow: 0 0 0 3px var(--kit), 0 0 26px var(--kit); } 100% { scale: 1; box-shadow: 0 0 0 0 transparent; } }
+@keyframes ptsSideGold { 0%, 40% { scale: 1.14; box-shadow: 0 0 0 3px #ffd34d, 0 0 34px #ffb300; } 100% { scale: 1; box-shadow: 0 0 0 0 transparent; } }
+.pts-side.s0 { --kit: #4dc3ff; } .pts-side.s1 { --kit: #ff6b6b; }
+
+/* ---------- стикеры: награды за трюки (src/ui/stickers.js) ---------- */
+/* Текст в два слоя: сам элемент — толстая тёмная обводка и тень-подложка, ::after — градиент роли с белой кромкой */
+.stk-t, .pts-head, .pts-total, .pts-float, .pts-final-h { position: relative; display: inline-block; font-family: Impact, "Arial Black", "Segoe UI Black", sans-serif; font-weight: 900; font-style: italic; line-height: 1; text-transform: uppercase; white-space: nowrap; color: #0b0f1a; -webkit-text-stroke: 0.2em #0b0f1a; paint-order: stroke fill; text-shadow: 0 0.09em 0 #0b0f1a, 0 0.16em 0.32em rgba(0, 0, 0, 0.55); }
+.stk-t::after, .pts-head::after, .pts-total::after, .pts-float::after, .pts-final-h::after { content: attr(data-t); position: absolute; left: 0; top: 0; color: transparent; -webkit-text-stroke: 0.045em #fff; background-image: var(--grad); -webkit-background-clip: text; background-clip: text; text-shadow: none; }
+.me { --grad: linear-gradient(180deg, #ffffff 0%, #c8f2ff 32%, #4dc3ff 56%, #1f78e0 100%); }
+.foe { --grad: linear-gradient(180deg, #ffffff 0%, #ffd6cf 32%, #ff6b5a 56%, #cf2a1c 100%); }
+.gold { --grad: linear-gradient(180deg, #fffbe6 0%, #fff07a 34%, #ffc21a 56%, #ff8a00 100%); }
+.bad { --grad: linear-gradient(180deg, #ffffff 0%, #ffb8b8 34%, #ff3b3b 58%, #a90f0f 100%); }
+.stk-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 3; }
+.stk { position: absolute; transform: translate(-50%, -50%); pointer-events: none; }
+.stk-s { font-size: calc(22px * var(--k, 1)); translate: 0 var(--lift, 0); transition: translate 160ms ease-out; animation: stkPop 800ms ease-out forwards; }
+.stk-m { font-size: 40px; animation: stkSlam 1050ms linear forwards; }
+.stk-m .stk-t { transform: rotate(var(--r, -4deg)) skewX(-8deg); }
+.stk-l { left: 50%; top: 30%; font-size: 78px; text-align: center; animation: stkBig 1250ms linear forwards; }
+.stk-l .stk-t { transform: rotate(var(--r, -3deg)) skewX(-8deg); }
+.stk-sub { display: block; margin-top: 10px; font: italic 900 18px/1 Impact, "Arial Black", sans-serif; letter-spacing: 0.2em; text-transform: uppercase; color: #fff; text-shadow: 0 2px 0 #000, 0 0 10px rgba(0, 0, 0, 0.8); }
+.stk-flare { position: absolute; left: 50%; top: 50%; width: 4.2em; height: 4.2em; margin: -2.1em; border-radius: 50%; z-index: -1; background: repeating-conic-gradient(from 0deg, rgba(255, 226, 110, 0.55) 0deg 7deg, transparent 7deg 20deg); -webkit-mask: radial-gradient(circle, #000 18%, transparent 68%); mask: radial-gradient(circle, #000 18%, transparent 68%); animation: stkFlare 1250ms ease-out forwards; }
+.stk-l.me .stk-flare { background: repeating-conic-gradient(from 0deg, rgba(120, 210, 255, 0.5) 0deg 7deg, transparent 7deg 20deg); }
+.stk-l.foe .stk-flare { background: repeating-conic-gradient(from 0deg, rgba(255, 120, 100, 0.45) 0deg 7deg, transparent 7deg 20deg); }
+.stk-spark { position: absolute; left: 50%; top: 50%; width: 9px; height: 9px; margin: -4.5px; background: #ffd34d; box-shadow: 0 0 6px currentColor; color: #ffd34d; transform: rotate(var(--a)) translateX(0) rotate(45deg) scale(1.2); animation: stkSpark 560ms cubic-bezier(.1, .8, .3, 1) forwards; }
+.stk-spark.me { background: #8fe0ff; color: #4dc3ff; } .stk-spark.foe { background: #ff9d8f; color: #ff6b5a; } .stk-spark.bad { background: #ff6b6b; color: #ff3b3b; }
+.stk-spark:nth-child(3n) { background: #fff; }
+.hud-note { position: absolute; left: 50%; bottom: 74px; transform: translate(-50%, 8px); background: rgba(10, 14, 22, 0.78); border: 1px solid var(--line); border-radius: 999px; padding: 5px 16px; font-size: 13px; color: var(--ink); white-space: nowrap; opacity: 0; transition: opacity 180ms, transform 180ms; pointer-events: none; }
+.hud-note.on { opacity: 1; transform: translate(-50%, 0); }
+@keyframes stkPop { 0% { transform: translate(-50%, -50%) scale(0.4); opacity: 0; } 15% { transform: translate(-50%, -60%) scale(1.25); opacity: 1; } 28% { transform: translate(-50%, -62%) scale(1); } 80% { opacity: 1; } 100% { transform: translate(-50%, -130%) scale(1); opacity: 0; } }
+@keyframes stkSlam { 0% { transform: translate(-50%, -50%) scale(2.2); opacity: 0; } 9% { transform: translate(-50%, -50%) scale(0.9); opacity: 1; } 17% { transform: translate(-50%, -50%) scale(1.06); } 25%, 72% { transform: translate(-50%, -50%) scale(1); opacity: 1; } 100% { transform: translate(-30%, -150%) scale(0.6); opacity: 0; } }
+@keyframes stkBig { 0% { transform: translate(-50%, -50%) scale(2.6); opacity: 0; } 8% { transform: translate(-50%, -50%) scale(0.88); opacity: 1; } 15% { transform: translate(-50%, -50%) scale(1.08); } 22%, 70% { transform: translate(-50%, -50%) scale(1); opacity: 1; } 100% { transform: translate(-50%, -120%) scale(0.7); opacity: 0; } }
+@keyframes stkSpark { to { transform: rotate(var(--a)) translateX(var(--d)) rotate(45deg) scale(0); } }
+@keyframes stkFlare { 0% { transform: scale(0.3) rotate(0deg); opacity: 0; } 12% { opacity: 1; } 100% { transform: scale(1.3) rotate(50deg); opacity: 0; } }
+.pts-total.pts-fly { position: fixed; margin: 0; }
+.pts-head.small { font-size: 44px; }
+.pts-float.bad { --grad: linear-gradient(180deg, #ff9a9a 0%, #ff4040 45%, #c01616 100%); } /* общий стиль стикера ставит relative: перелёт должен остаться fixed */
+html.shorts-on .stk-layer, html.shorts-on .hud-note { display: none; } /* в шортс сюжет ведут титры */
+
 @media (prefers-reduced-motion: reduce) {
-  .pts-num.bump, .pts-num.shake, .pts-clock.warn, .pts-clock.crit.tick, .pts-head, .pts-line, .pts-total, .pts-flash.on, .pts-float, .pts-final.on, .pts-hold.on, .pts-count.on { animation: none; }
+  .pts-num.bump, .pts-num.shake, .pts-clock.warn, .pts-clock.crit.tick, .pts-head, .pts-line, .pts-total, .pts-total.done, .pts-total.done::after, .pts-tag, .pts-side.hit, .pts-side.hit.gold, .pts-flash.on, .pts-float, .pts-final.on, .pts-hold.on, .pts-count.on { animation: none; }
   .pts-count.on { opacity: 0.35; } .pts-float { opacity: 0; }
+  .stk-s, .stk-m, .stk-l { animation: stkFade 900ms linear forwards; } .stk-flare, .stk-spark { display: none; }
 }
+@keyframes stkFade { 0%, 80% { opacity: 1; } 100% { opacity: 0; } }

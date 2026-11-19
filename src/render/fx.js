@@ -2,7 +2,7 @@
 // Только изображение: симуляцию не трогает (она авторитетна, в сети её нельзя останавливать ради «замирания»).
 import * as THREE from 'three';
 
-const MAXP = 160;
+const MAXP = 512; // два крупных взрыва подряд не вытесняют друг друга
 const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export class PointsFx {
@@ -38,8 +38,10 @@ export class PointsFx {
   }
 
   // взрыв у точки x,y,z; dir — куда в основном летят частицы по x (обратно в поле из ворот); kit — цвет команды
-  burst(x, y, z, dir, kit, count) {
+  // delay — через сколько секунд кадрового времени (замедление шортсов и повторы его учитывают)
+  burst(x, y, z, dir, kit, count, delay = 0) {
     if (reduced) return;
+    if (delay > 0) { (this.later || (this.later = [])).push({ t: delay, a: [x, y, z, dir, kit, count] }); return; }
     const gold = new THREE.Color(0xffd34d), team = new THREE.Color(kit);
     for (let n = 0; n < count; n++) {
       const i = this.next; this.next = (this.next + 1) % MAXP;
@@ -72,6 +74,12 @@ export class PointsFx {
   }
 
   update(dt) {
+    if (this.later?.length) {
+      for (const q of this.later) q.t -= dt;
+      const due = this.later.filter((q) => q.t <= 0);
+      this.later = this.later.filter((q) => q.t > 0);
+      for (const q of due) this.burst(...q.a);
+    }
     let live = 0;
     for (let i = 0; i < MAXP; i++) {
       if (this.life[i] <= 0) { this.col[i * 3] = this.col[i * 3 + 1] = this.col[i * 3 + 2] = 0; continue; }

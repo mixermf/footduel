@@ -13,6 +13,8 @@ import { MatchIntro, INTRO, blendView } from './render/intro.js';
 import { Bot, BOT_LEVELS } from './ai/bot.js';
 import { PointsHud } from './ui/points.js';
 import { PointsFx } from './render/fx.js';
+import { LedBoards } from './render/ledBoards.js';
+import { Stickers, TONE } from './ui/stickers.js';
 import { initAnalytics, track } from './analytics/analytics.js';
 import { MatchTracker } from './analytics/matchTracker.js';
 
@@ -58,6 +60,15 @@ window.addEventListener('pagehide', () => stats.abort('page_closed', game.world)
 hud.points = new PointsHud(document.getElementById('hud'), (x, y, z) => scene.toScreen(x, y, z));
 hud.points.onTick = (n) => sfx.play('ui', n <= 3 ? 0.9 : 0.5);
 const pfx = new PointsFx(scene.scene);
+// стикеры-награды за трюки и тихие заметки вместо прежнего тоста (src/ui/stickers.js)
+const stickers = hud.stickers = new Stickers(document.getElementById('hud'), (x, y, z) => scene.toScreen(x, y, z));
+stickers.busy = () => hud.points.busy;
+hud.points.onCount = (u) => sfx.play('ui', u >= 1 ? 0.7 : 0.18); // «одометр» итога щёлкает, последнее число — громче
+hud.points.onArrive = (i, big) => sfx.play('ui', big ? 0.9 : 0.55);
+hud.points.onReset = () => stickers.clear();
+// LED-борта: реклама вымышленных брендов и «ГОЛ!» на всех экранах (src/render/ledBoards.js)
+const led = new LedBoards(scene.scene, profile.field);
+led.bulbs = scene.bulbs; game.led = led;
 // имена в дуэли: из лобби в сети, «Вы» и «Бот» в матче с ботом
 function duelNames() {
   if (game.shorts?.names) return game.shorts.names;
@@ -413,6 +424,7 @@ function handleEvents(events, me = 0, accept = null) {
     if (accept && !accept(e)) continue;
     stats.onEvent(e);
     const mine = e.pi === undefined || e.pi === me;
+    const who = world.players[e.pi ?? me] || world.player; // над кем показывать стикер
     switch (e.type) {
       case 'ball_return': hud.showToast('Мяч возвращён', { ms: 500 }); break;
       case 'feed': if (SCENARIOS[e.kind]) hud.showToast(SCENARIOS[e.kind].label, { ms: 600 }); break;
@@ -423,38 +435,50 @@ function handleEvents(events, me = 0, accept = null) {
       case 'touch':
         sfx.play('touch', 0.5, pan); scene.contactFlash(b.x, e.kind === 'juggle' || e.kind === 'toss' ? b.y : 0.02, b.z, 0);
         if (e.kind === 'toss' && mine) hud.showToast('Прокинул себе: удар + прыжок', { ms: 900 });
-        if (e.kind === 'juggle' && mine && e.n >= 3) hud.showToast('Чеканка ×' + e.n, { ms: 500 });
+        if (e.kind === 'juggle' && mine && e.n >= 3) stickers.pop('ЧЕКАНКА ×' + e.n, who, e.n >= 10 ? TONE.gold : TONE.me, e.n);
         break;
       case 'juggle_start': if (mine) hud.showToast('Чеканка: удар — с лёта, пробел — подбить выше', { ms: 1200 }); break;
       case 'slide': sfx.play('slide', 0.5, panOf(e)); break;
       case 'land': sfx.play('thud', 0.25, panOf(e)); break;
-      case 'kick_armed': if (mine) hud.showToast('Удар в прыжке!', { ms: 500 }); break;
       case 'fall': sfx.play('thud', 0.8, panOf(e)); scene.shake = Math.max(scene.shake, 0.04); break;
       case 'tackle':
         sfx.play('kick', 0.5, pan); scene.contactFlash(b.x, b.y, b.z, 0.5);
-        if (mine) { hud.showToast(e.air ? 'Подкат в прыжке!' : 'Подкат!', { ms: 600 }); if (game.settings.vibration) input.rumble(0.4, 80); }
+        if (mine) {
+          if (e.air) stickers.trick('ПОДКАТ В ПРЫЖКЕ!', who, { prio: 2 }); else stickers.pop('ПОДКАТ!', who);
+          if (game.settings.vibration) input.rumble(0.4, 80);
+        }
         break;
       case 'super_empty': if (mine) hud.showToast('Суперудар не готов: ' + Math.round(e.charge * 100) + '%', { ms: 600 }); break;
       case 'kick':
         sfx.play('kick', Math.min(1, e.speed / 24), pan); scene.contactFlash(b.x, b.y, b.z, 0.6 + e.charge + (e.firstTime ? 0.5 : 0));
         scene.shake = 0.03 + 0.09 * Math.min(1, e.speed / 24) + (e.kind === 'super' ? 0.12 : 0);
-        if (!mine) break;
-        if (e.kind === 'super') hud.showToast('СУПЕРУДАР!', { big: true, ms: 900 });
-        else if (e.kind === 'lob') hud.showToast('Навес', { ms: 500 });
-        else if (e.bike) hud.showToast('Через себя!', { big: true, ms: 800 });
-        else if (e.fly) hud.showToast('Сбоку в полёте!', { big: true, ms: 800 });
-        else if (e.jump) hud.showToast('Удар в прыжке!', { ms: 600 });
-        else if (e.volley) hud.showToast('С лёта!', { ms: 500 });
-        else if (e.firstTime) hud.showToast('В касание!', { ms: 450 });
+        if (!mine) {
+          // трюки соперника — только мелкой подписью его цвета над ним
+          const t = e.kind === 'super' ? 'СУПЕРУДАР' : e.bike ? 'ЧЕРЕЗ СЕБЯ' : e.fly ? 'В ПОЛЁТЕ' : '';
+          if (t) stickers.pop(t, who, TONE.foe);
+          break;
+        }
+        // крупные трюки — стикер «вау», средние — стикер у игрока (сильный не перебивается слабым), навес — подпись
+        if (e.kind === 'super') stickers.big('СУПЕРУДАР!', { tone: TONE.gold });
+        else if (e.bike) stickers.big('ЧЕРЕЗ СЕБЯ!', { tone: TONE.me });
+        else if (e.fly) stickers.big('В ПОЛЁТЕ!', { tone: TONE.me });
+        else if (e.jump) stickers.trick('В ПРЫЖКЕ!', who, { prio: 3 });
+        else if (e.volley) stickers.trick('С ЛЁТА!', who, { prio: 2 });
+        else if (e.firstTime) stickers.trick('В КАСАНИЕ!', who, { prio: 1 });
+        else if (e.kind === 'lob') stickers.pop('НАВЕС', who);
         if (game.settings.vibration) input.rumble(0.3 + 0.6 * e.charge, 90);
         break;
       case 'receive':
         sfx.play(e.auto === 'deflect' ? 'body' : e.quality >= 1 ? 'receive' : 'receive_bad', 0.5, pan);
         if (!mine) break;
-        hud.showToast(e.auto === 'deflect' ? (e.zone === 'head' ? 'Сыграл головой' : e.zone === 'chest' ? 'Принял на грудь' : 'Принял на бедро') : e.reach ? 'Дотянулся' : e.quality >= 1 ? 'Точный приём' : e.guard ? 'Приём в стойке' : e.auto === 'stop' ? 'Остановил' : e.auto === 'cushion' ? 'Принял на щёчку' : 'Неполный приём', { ms: 600 });
+        {
+          // награда — только за хороший приём; обычные остановки и неполный приём без надписей (их слышно)
+          const t = e.auto === 'deflect' ? (e.zone === 'head' ? 'ГОЛОВОЙ' : e.zone === 'chest' ? 'НА ГРУДЬ' : 'НА БЕДРО') : e.reach ? 'ДОТЯНУЛСЯ!' : e.quality >= 1 ? 'ТОЧНЫЙ ПРИЁМ' : '';
+          if (t) stickers.pop(t, who, e.quality >= 1 && !e.auto ? TONE.gold : TONE.me);
+        }
         if (game.settings.vibration) input.rumble(0.25, 60);
         break;
-      case 'header': sfx.play('header', 0.6, pan); if (mine) hud.showToast('Игра головой', { ms: 500 }); break;
+      case 'header': sfx.play('header', 0.6, pan); if (mine) stickers.pop('ГОЛОВОЙ!', who); break;
       case 'body': sfx.play('body', e.speed / 15, pan); break;
       case 'wall': sfx.play(e.surface === 'board' ? 'wall' : 'fence', e.speed / 18, pan); break;
       case 'net': sfx.play('net', e.speed / 18, pan); scene.netHit(e.side, e.part, b.x, b.y, b.z, e.speed); break;
@@ -465,12 +489,17 @@ function handleEvents(events, me = 0, accept = null) {
         sfx.play('goal');
         if (e.pts !== undefined) {
           // дуэль: разбор очков вместо тоста «ГОЛ!», частицы и кольца у ворот
+          stickers.hush(); // трюк-стикеры не перекрывают разбор очков
           scene.shake = Math.max(scene.shake, hud.points.goal(e, me, performance.now()));
           const kit = e.by === 0 ? 0x2f7bff : 0xff5a44, dir = -Math.sign(b.x || 1), gx = Math.sign(b.x || 1) * (world.P.field.length / 2 - world.P.field.goalInset);
           pfx.burst(gx, Math.min(1.8, Math.max(0.3, b.y)), b.z, dir, kit, e.pts >= 400 ? 140 : e.pts >= 200 ? 80 : 40);
           pfx.ring(gx + dir * 1.2, b.z * 0.5, kit);
           if (e.pts >= 400) pfx.ring(gx + dir * 1.2, b.z * 0.5, 0xffd34d, 0.12);
-        } else hud.showToast(scored ? 'ГОЛ!' : 'Пропущен', { big: true, ms: 1100 });
+          // крупный гол — ещё две волны искр над воротами
+          if (e.pts >= 200) for (const [d, n] of [[0.25, 60], [0.5, 50]]) pfx.burst(gx, 1.6, (Math.random() - 0.5) * 2, dir, kit, n, d);
+        } else stickers.big(scored ? 'ГОЛ!' : 'ПРОПУЩЕН', { tone: scored ? TONE.gold : TONE.bad });
+        // все LED-борта: «ГОЛ!» в своём золоте или в цвете забившего соперника; волна идёт от забитых ворот
+        led.goal({ mine: scored, kit: e.by === 0 ? '#4dc3ff' : '#ff5a44', side: Math.sign(b.x || 1), pts: e.pts || 0 });
         if (e.by !== undefined) (e.by === 1 ? rig2 : rig).celebrate(); else if (e.scored) rig.celebrate(); // празднует забивший
         if (game.settings.vibration) input.rumble(0.8, 200);
         break;
@@ -481,14 +510,19 @@ function handleEvents(events, me = 0, accept = null) {
         if (mine && game.settings.vibration) input.rumble(0.3, 60);
         break;
       case 'buzzer': sfx.play('whistle'); break;
-      case 'overtime': sfx.play('whistle'); hud.showToast('Ничья — ЗОЛОТОЙ ГОЛ: первые очки решают', { big: false, ms: 1800 }); break;
+      case 'overtime': sfx.play('whistle'); stickers.big('ЗОЛОТОЙ ГОЛ!', { sub: 'первые очки — победа' }); led.finish('ЗОЛОТОЙ ГОЛ', '#ffd400', { hold: 1.0, level: 0.55 }); break;
       case 'match_over':
         if (e.points) {
           sfx.play('whistle'); hud.points.finish(e.winner, me, e.points, duelNames());
           if (e.winner >= 0) { const kit = e.winner === 0 ? 0x2f7bff : 0xff5a44, q = world.players[e.winner]; if (q) pfx.burst(q.x, 2, q.z, -Math.sign(q.x || 1), kit, 140); }
+          led.finish(e.winner < 0 ? 'НИЧЬЯ' : e.winner === me ? 'ПОБЕДА!' : 'МАТЧ ОКОНЧЕН', e.winner < 0 || e.winner === me ? '#ffd400' : e.winner === 0 ? '#4dc3ff' : '#ff5a44');
         }
         break;
-      case 'kickoff': sfx.play('whistle'); hud.showToast(e.to === me ? 'Мяч у вас' : 'Мяч у соперника', { ms: 700 }); break;
+      case 'kickoff':
+        // розыгрыш: разбор гола и «ГОЛ!» на бортах сворачиваются, чтобы не висеть над живой игрой
+        sfx.play('whistle'); hud.points.endGoal(performance.now()); led.calm();
+        stickers.note(e.to === me ? 'Твой мяч' : 'Мяч у соперника', 900);
+        break;
       case 'kick_cancel': if (mine) { sfx.play('cancel'); hud.showToast('Удар отменён: ' + e.reason, { ms: 800 }); } break;
       case 'kick_miss': if (mine) { sfx.play('miss'); hud.showToast('Мимо мяча', { ms: 600 }); } break;
       case 'kick_empty': if (mine) hud.showToast('Мяч далеко', { ms: 500 }); break;
@@ -675,6 +709,7 @@ function runFrame(now) {
     pfx.holdRing(i, h >= HD.warn, v ? v.px : 0, v ? v.pz : 0, Math.max(0, (HD.grace - h) / (HD.grace - HD.warn)), h >= HD.grace);
   }
   pfx.update(game.shorts ? dtVis : dtReal);
+  led.update(game.shorts ? dtVis : dtReal, view.bz, view.by);
   scene.updateCamera(view.px, view.pz, view.yaw, dtReal);
   game.lab?.onFrame(dtReal);
   hud.update(dtReal, world, input, game.replay ? 'ПОВТОР' : game.timeScale !== 1 && !duo ? game.timeScale + '×' : '',
