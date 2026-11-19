@@ -13,6 +13,8 @@ import { MatchIntro, INTRO, blendView } from './render/intro.js';
 import { Bot, BOT_LEVELS } from './ai/bot.js';
 import { PointsHud } from './ui/points.js';
 import { PointsFx } from './render/fx.js';
+import { initAnalytics, track } from './analytics/analytics.js';
+import { MatchTracker } from './analytics/matchTracker.js';
 
 const LAB_ENABLED = import.meta.env.DEV || import.meta.env.MODE === 'lab';
 const SETTINGS_KEY = 'soccer-duel-desktop.settings.v1';
@@ -49,6 +51,9 @@ window.__game = LAB_ENABLED ? game : undefined;
 game.version = '0.6.0';
 
 const { input, scene, rig, rig2, hud, sfx } = game;
+// аналитика матчей: сколько партий, как долго, итог и причина (src/analytics/matchTracker.js)
+const stats = game.stats = new MatchTracker(track);
+window.addEventListener('pagehide', () => stats.abort('page_closed', game.world));
 // очки дуэли: табло и разбор очков в HUD, частицы и кольца на поле
 hud.points = new PointsHud(document.getElementById('hud'), (x, y, z) => scene.toScreen(x, y, z));
 hud.points.onTick = (n) => sfx.play('ui', n <= 3 ? 0.9 : 0.5);
@@ -155,6 +160,7 @@ function settingsItems() {
 }
 
 function mainMenu() {
+  stats.abort('quit_menu', game.world); // матч брошен посреди игры (после итога учёт уже закрыт)
   if (game.net) { game.net.leave(); game.net = null; }
   lobby.close();
   setMode('sandbox');
@@ -172,6 +178,7 @@ function mainMenu() {
 // Выход из игры: матч покидается, окно закрывается. Браузер не даёт закрыть вкладку, которую открыл сам пользователь, —
 // тогда остаётся экран завершения с возвратом в главное меню (в desktop-упаковке окно закроется).
 function quitGame() {
+  stats.abort('quit_game', game.world);
   if (game.net) { game.net.leave(); game.net = null; }
   lobby.close();
   setMode('sandbox');
@@ -193,12 +200,14 @@ function botLevelItem(label, act) {
 }
 
 function startBotMatch() {
+  stats.abort('restart', game.world); // «Начать заново» из паузы: прежний матч не доигран
   hud.closeMenu();
   setMode('bot');
   const lvl = BOT_LEVELS[game.settings.botLevel] ? game.settings.botLevel : 'medium';
   vsBot.seed = (Math.random() * 0xffff | 0) || 1; // кто вводит мяч, зависит от зерна
   vsBot.reset('duel');
   bot = game.bot = new Bot(1, lvl, vsBot.seed); // game.bot.L — параметры уровня, их можно крутить из консоли
+  stats.start({ mode: 'bot', botLevel: lvl, me: 0 });
   botOver = false; clearTimeout(botMenuTimer);
   hud.points.reset();
   vsBot.snapshot(prev); vsBot.snapshot(cur);
@@ -239,7 +248,10 @@ function stepBot(dtReal) {
   }
   if (simSteps > 0) input.endFrameEdges();
   if (simSteps === 16) acc = 0;
-  if (world.phase === 'over' && !botOver) botMatchOver();
+  if (world.phase === 'over' && !botOver) {
+    stats.finish({ winner: vsBot.winner, points: vsBot.points, goals: vsBot.goals }, vsBot);
+    botMatchOver();
+  }
 }
 
 function openLobby(kind, code = '') {
@@ -389,6 +401,7 @@ function handleEvents(events, me = 0, accept = null) {
   const panOf = (e) => { const q = world.players[e.pi || 0]; return q ? Math.max(-1, Math.min(1, q.x / (world.P.field.length / 2))) * 0.55 : pan; };
   for (const e of events) {
     if (accept && !accept(e)) continue;
+    stats.onEvent(e);
     const mine = e.pi === undefined || e.pi === me;
     switch (e.type) {
       case 'ball_return': hud.showToast('Мяч возвращён', { ms: 500 }); break;
@@ -528,6 +541,7 @@ function stepOnline(dtReal, now) {
     handleEvents(s.serverEvents, me, (e) => e.pi !== me && !BALL_EVENTS.has(e.type));
     s.serverEvents.length = 0;
   }
+  trackOnline(net);
   if (!s.playing) { acc = 0; s.clearError(); return; }
   acc += dtReal;
   let simSteps = 0;
@@ -544,6 +558,19 @@ function stepOnline(dtReal, now) {
   if (simSteps === 16) acc = 0;
   s.flush();
   s.decayError(dtReal);
+}
+
+// Учёт сетевого матча — по состоянию комнаты, а не по событиям: сообщение комнаты доходит всегда,
+// а состояния с событиями при скрытом окне и пересинхронизации пропускаются. Возврат после обрыва (paused → play) — тот же матч
+function trackOnline(net) {
+  const s = net.session, L = s.lobby;
+  if (s.me < 0) return;
+  if (stats.active) {
+    if (L?.state === 'over') stats.finish({ winner: L.winner, points: L.points || [0, 0], goals: L.goals || [0, 0] }, duel);
+    else if (s.closed) stats.abort(s.closed, duel);
+    else if (s.error) stats.abort('rejoin_' + s.error, duel); // вернуться в комнату после обрыва не вышло
+    else if (net.status === 'failed') stats.abort('disconnect', duel);
+  } else if (L?.state === 'play' && net.status === 'open' && !s.closed && !s.error) stats.start({ mode: 'online', me: s.me }); // после обрыва комната остаётся в 'play' — без живой связи матч не начинается
 }
 
 // интерполяция одного игрока между двумя шагами симуляции; off — гаснущая поправка сетевого расхождения
@@ -666,6 +693,7 @@ async function boot() {
     game.lab = new Lab(game, document.getElementById('lab'));
   }
   loading.remove();
+  initAnalytics();
   last = performance.now();
   const q = new URLSearchParams(location.search);
   const room = (q.get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
