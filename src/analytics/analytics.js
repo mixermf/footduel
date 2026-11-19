@@ -4,13 +4,13 @@
 // ?analytics=1 включает (события помечаются debug_mode и видны в DebugView), ?analytics=0 выключает где угодно.
 
 const firebaseConfig = {
-  apiKey: 'AIzaSyCpFJJbQVahjYZzMmEfzrkQe1HWJda5lrU',
-  authDomain: 'forbiddenisland-8f0ba.firebaseapp.com',
-  projectId: 'forbiddenisland-8f0ba',
-  storageBucket: 'forbiddenisland-8f0ba.firebasestorage.app',
-  messagingSenderId: '158417589849',
-  appId: '1:158417589849:web:508cbb6484c97b71274348',
-  measurementId: 'G-C2RTZHZC6W',
+  apiKey: 'AIzaSyAl-BEisDgGZOX9nV40AftXsaS6pz3sjyE',
+  authDomain: 'jogabonita-de9d8.firebaseapp.com',
+  projectId: 'jogabonita-de9d8',
+  storageBucket: 'jogabonita-de9d8.firebasestorage.app',
+  messagingSenderId: '42900734029',
+  appId: '1:42900734029:web:23ce243f1550a7b07f5c04',
+  measurementId: 'G-GLXVCQZFEZ',
 };
 
 const LAB = import.meta.env.DEV || import.meta.env.MODE === 'lab';
