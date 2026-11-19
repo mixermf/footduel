@@ -21,8 +21,9 @@ import packCelebrate from '../../assets/mocap/pack-celebrate.json';
 import introWalk from '../../assets/mocap/intro-walk.json';
 import introStrut from '../../assets/mocap/intro-strut.json';
 import introShake from '../../assets/mocap/intro-shake.json';
+import getup from '../../assets/mocap/getup.json';
 
-export const CLIPS = { idle, jogForward, jogBackward, jogLeft, jogRight, kick, strikeJog, receive, packKickSide, packKickPower, packGuard, packJuggle, packCelebrate, introWalk, introStrut, introShake };
+export const CLIPS = { idle, jogForward, jogBackward, jogLeft, jogRight, kick, strikeJog, receive, packKickSide, packKickPower, packGuard, packJuggle, packCelebrate, introWalk, introStrut, introShake, getup };
 export const BONES = idle.bones;
 const INDEX = Object.fromEntries(BONES.map((b, i) => [b, i]));
 // зеркальная пара кости (для удара другой ногой)

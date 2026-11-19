@@ -645,7 +645,9 @@ export class World {
 
   // ---------- падение после удара через себя ----------
   // В воздухе — «ножницы»: свободная нога идёт вверх первой, на проносе бьющей уходит вниз. После удара игрок падает на спину
-  // (fall.roll ≠ 0 — набок), лежит с согнутыми коленями и встаёт, выходя корпусом к стопам. fall.k: 0 — стоит, 1 — лежит.
+  // (fall.roll ≠ 0 — набок), садится в стартовую позу клипа подъёма и встаёт по нему (fall.getup): стопы и корпус идут по
+  // таблице клипа (profile.getup), поэтому после подъёма стопы стоят там, где их оставил клип. fall.k: 0 — стоит, 1 — лежит;
+  // fall.dur — длительность текущей фазы, с (по ней отрисовка ведёт позу).
   _fallStep(p) {
     const F = this.P.fall, dt = this.dt, fl = p.fall, k = p.kick;
     if (fl.kind === 'side') { this._flyStep(p); return; }
@@ -653,11 +655,14 @@ export class World {
     const fx = fl.ux, fz = fl.uz, rx = -fz, rz = fx;
     if (k) fl.kickFoot = k.footSide > 0 ? 1 : 0;
     if (fl.phase === 'air') {
-      if (p.y <= 0 && !k) { fl.phase = 'down'; fl.t = 0; fl.v0 = Math.max(1.5, fl.vy || 0); this.events.push({ type: 'fall', roll: fl.roll }); }
+      if (p.y <= 0 && !k) { fl.phase = 'down'; fl.t = 0; fl.dur = F.down; fl.v0 = Math.max(1.5, fl.vy || 0); this.events.push({ type: 'fall', roll: fl.roll }); }
       else fl.vy = -p.vy; // скорость снижения: с ней тело продолжает опускаться, когда уровень стоп дошёл до покрытия
     } else {
       fl.t += dt;
-      if (fl.phase === 'down') { fl.k = Math.min(1, (fl.v0 * fl.t + 0.5 * this.P.ball.gravity * fl.t * fl.t) / F.height); if (fl.t >= F.down) { fl.phase = 'rise'; fl.t = 0; } }
+      if (fl.phase === 'down') {
+        fl.k = Math.min(1, (fl.v0 * fl.t + 0.5 * this.P.ball.gravity * fl.t * fl.t) / F.height);
+        if (fl.t >= F.down) { fl.phase = 'rise'; fl.t = 0; fl.dur = F.rise; fl.gx = p.x; fl.gz = p.z; } // от этой точки клип ведёт таз и стопы
+      }
       else {
         const u = Math.min(1, fl.t / F.rise); fl.k = 1 - u;
         if (u >= 1) { this._endFall(p); return; }
@@ -679,8 +684,8 @@ export class World {
         else if (k) { fo = 0.62; h = p.y + 0.45; rate = 16; } // пронос и контакт: ноги меняются местами
         else if (isKick) { fo = 0.5; lo = sgn * 0.12; h = p.y + 0.7; rate = 8; } // после удара ноги опускаются над точками приземления
         else { fo = 0.5; lo = sgn * 0.12; h = p.y + 0.3; rate = 8; }
-      } else if (phase === 'down') { fo = 0.5; lo = sgn * 0.12; h = 0; rate = 11; }
-      else continue; // подъём: стопы стоят, корпус выходит к ним
+      } else if (phase === 'down') { const G = this.P.getup, row = G.tab[0]; fo = row[2 + 2 * i] * G.hip; lo = row[3 + 2 * i] * G.hip; h = 0; rate = 11; } // стопы — как в стартовой позе подъёма
+      else continue; // подъём: стопы ведёт клип (ниже)
       const a = Math.min(1, rate * dt);
       // стопа, вставшая на покрытие, больше не едет: дальше к ней подходит корпус
       const still = phase === 'down' && (f.ctl.set || (f.h < 0.03 && fl.t > 0.08));
@@ -689,8 +694,27 @@ export class World {
       f.h += (h - f.h) * a;
       f.yaw = fl.yaw;
     }
-    if (phase === 'rise') for (const f of p.feet) if (f.ctl && f.ctl.fall) { f.h = Math.max(0, f.h - 2 * dt); f.yaw = fl.yaw; }
+    if (phase === 'rise') {
+      const G = this.P.getup, at = this._getupAt(fl);
+      for (let i = 0; i < 2; i++) {
+        const f = p.feet[i];
+        if (!f.ctl || !f.ctl.fall) continue;
+        const fo = at[2 + 2 * i] * G.hip, lo = at[3 + 2 * i] * G.hip;
+        f.x = fl.gx + fx * fo + rx * lo; f.z = fl.gz + fz * fo + rz * lo; f.h = Math.max(0, f.h - 2 * dt); f.yaw = fl.yaw;
+      }
+    }
   }
+
+  // Строка таблицы подъёма (profile.getup.tab) на текущий момент фазы rise: [тазВперёд, тазВправо, LВперёд, LВправо,
+  // RВперёд, RВправо] в высотах таза; линейно между строками через 0,1 с клипа (последняя строка — конец куска)
+  _getupAt(fl) {
+    const G = this.P.getup, T = G.tab, n = T.length - 1, span = G.to - G.from, tc = Math.min(1, fl.t / fl.dur) * span;
+    // строки через 0,1 с, последняя — ровно конец куска (шаг до неё короче)
+    const i = Math.min(n - 1, Math.floor(tc / 0.1)), k = Math.min(1, (tc - i * 0.1) / (i === n - 1 ? Math.max(1e-6, span - i * 0.1) : 0.1));
+    return T[i].map((v, j) => v + (T[i + 1][j] - v) * k);
+  }
+
+
 
   _endFall(p) {
     for (const f of p.feet) if (f.ctl && f.ctl.fall) {
@@ -969,7 +993,11 @@ export class World {
       // падение после удара через себя: в воздухе игрок летит по инерции, на покрытии лежит; вставая, выходит корпусом к стопам
       const fl = p.fall, F = P.fall;
       if (p.y > 0) { dvx = p.vx; dvz = p.vz; }
-      else if (fl.phase === 'rise') { const sp = fl.k < 0.8 && fl.k > 0.2 ? F.step / (F.rise * 0.6) : 0; dvx = fl.ux * sp; dvz = fl.uz * sp; }
+      else if (fl.phase === 'rise') {
+        // корпус идёт за тазом клипа подъёма (от точки, где игрок сел)
+        const G = this.P.getup, at = this._getupAt(fl), tx = fl.gx + (fl.ux * at[0] - fl.uz * at[1]) * G.hip, tz = fl.gz + (fl.uz * at[0] + fl.ux * at[1]) * G.hip;
+        dvx = (tx - p.x) * 12; dvz = (tz - p.z) * 12;
+      }
       ov = fl.kind === 'side' ? { a: 16, b: 16 } : { a: 30, b: 30 }; // после удара сбоку игрок приходит на ноги и гасит ход шагом
       faceYaw = fl.yaw;
     } else if (p.lunge && !k) {

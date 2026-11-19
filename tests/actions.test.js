@@ -166,7 +166,8 @@ test('bicycle kick: scissors in the air, fall on the back or on the side, get up
     assert.ok(r.lead > 0.45, 'free leg leads in the windup: ' + r.lead.toFixed(2));
     assert.ok(r.cross > 0.6, 'legs cross over at contact: ' + r.cross.toFixed(2));
     assert.ok(r.fell && r.down > 8, 'the player lies on the turf: ' + r.down);
-    assert.ok(r.upAt > 0 && (r.upAt - r.landAt) / 120 < 1.3, 'gets up in about a second');
+    const F = make('motor').P.fall; // on the turf: lying + sitting up (down), then the get-up clip (rise)
+    assert.ok(r.upAt > 0 && (r.upAt - r.landAt) / 120 < F.down + F.rise + 0.1, 'gets up in down + rise: ' + ((r.upAt - r.landAt) / 120).toFixed(2));
     assert.ok(r.moved < 0.5, 'does not slide around while down: ' + r.moved.toFixed(2));
     assert.equal(p.fall, null);
     assert.ok(!p.feet[0].ctl && !p.feet[1].ctl, 'feet are back in the normal cycle');

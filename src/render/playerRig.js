@@ -126,6 +126,7 @@ export class PlayerRig {
     this._kLeg = false; this._kH = 0.11; this._kSideA = 0; this._kp = {}; this._prevYaw = undefined; this._armW = null; this._fallSide = 0;
     if (this.ready) this._grip(0);
     for (const L of this.legs || []) { L.pole = null; L.pitch = 0; L.kw = 0; L.bw = 0; L.kDyn = false; L.aw = null; L.lw = null; L.ankSide = 0; }
+    this._guW = 0; if (this._gu) { this._gu.rw = 0; this._gu.hw = 0; }
   }
 
   async load(scene, targetHeight) {
@@ -1113,6 +1114,76 @@ export class PlayerRig {
     // поворот к мячу: вокруг вертикали (в осях сцены положительный угол рыскания — по часовой сверху)
     const headExtra = new THREE.Quaternion().setFromAxisAngle(UP, -look).multiply(_q.setFromAxisAngle(r, -(lookPitch + leanF * 0.5) + (g && g.type === 'head' ? 0.35 * gw : 0))).multiply(_q2.setFromAxisAngle(f, -leanS * 0.5));
     world('Head', headExtra, curl[4]);
+    this._getupLayer(s, aux, dt, f, r);
+  }
+
+  // ---------- падение на спину и подъём по клипу «Getting Up» (поверх процедурной позы, все кости)
+  // После удара, ещё в полёте, тело за 0,3 с принимает позу «на спину»: стартовая поза клипа (сидя, колени согнуты),
+  // откинутая назад вокруг таза — ноги вверх, корпус лёжа. Таз опускается к покрытию вместе с падением в симуляции (fall.k).
+  // Затем тело перекатывается вперёд и садится ровно в стартовую позу клипа; с фазой rise клип играет кусок getup.rise за
+  // время фазы, а по её концу слой гаснет за 0,3 с в обычную стойку. Симуляция ставит стопы и таз по той же таблице клипа
+  // (profile.getup), поэтому стыки поз — без скачка. Кисти и локти не уходят под покрытие: рука доворачивается в плече.
+  _getupLayer(s, aux, dt, f, r) {
+    const fl = aux.fall, G = CLIPS.getup, back = !!fl && fl.kind === 'back';
+    const air = back && fl.phase === 'air' && !aux.kick, on = back && (fl.phase === 'down' || fl.phase === 'rise');
+    const sm01 = (x) => { const y = clamp(x, 0, 1); return y * y * (3 - 2 * y); };
+    const st = this._gu || (this._gu = { x: 0, z: 0, yaw: 0, roll: 0, rw: 0, hw: 0, t: 0 });
+    let e = 0, rollE = 0, tc = G.rise.from, follow = false;
+    if (air || on) {
+      st.yaw = fl.yaw; st.roll = fl.roll || 0;
+      st.rw = Math.min(1, st.rw + (dt > 0 ? dt / 0.3 : 1));
+      if (fl.phase === 'rise') {
+        tc = G.rise.from + clamp(fl.t / (fl.dur || 1), 0, 1) * (G.rise.to - G.rise.from); st.hw = 1;
+        if (fl.gx !== undefined) { st.x = fl.gx; st.z = fl.gz; }
+      } else {
+        // на спине треть фазы down после касания, затем перекат вперёд в сед к её концу
+        const dn = fl.dur || 0.4, lie = fl.phase === 'air' ? 1 : 1 - sm01((fl.t - 0.35 * dn) / (0.65 * dn));
+        e = 0.6 * lie; rollE = st.roll * 0.45 * lie;
+        st.hw = fl.phase === 'down' ? clamp(fl.k, 0, 1) : 0; st.x = s.px; st.z = s.pz; // fl.k уже идёт по ускорению падения
+      }
+      st.t = tc;
+    } else {
+      // слой гаснет за 0,3 с (на ходу — за 0,15 с), уже под управлением: таз и разворот — за игроком, а не в точке подъёма
+      if (st.rw <= 0) return;
+      const moving = Math.hypot(s.vx, s.vz) > 0.5;
+      st.rw = Math.max(0, st.rw - (dt > 0 ? dt / (moving ? 0.15 : 0.3) : 1)); st.hw = Math.min(st.hw, st.rw);
+      if (st.rw <= 0) return;
+      tc = st.t; follow = true;
+    }
+    this._guW = st.rw;
+    const Wr = sm01(st.rw), Wh = on ? st.hw : sm01(st.hw);
+    const B = this.bones, R = this.rest, P = this._guPose || (this._guPose = new PoseBlend()), H = this.hipRestY;
+    P.reset(); P.add(G, tc, 1); P.finish();
+    const th = follow ? s.yaw : st.yaw, ff = _x.set(Math.cos(th), 0, Math.sin(th)), rr = _z.set(-ff.z, 0, ff.x);
+    const yawQ = this._yawQuat(th, new THREE.Quaternion());
+    // откат на спину — поворот всего тела вокруг таза: назад вокруг поперечной оси и набок вокруг продольной
+    // (руки набок не заваливаются: на боку нижняя рука уходила под корпус и проворачивалась, 91° за кадр)
+    const Eb = new THREE.Quaternion().setFromAxisAngle(rr, e), E = Eb.clone().multiply(_q.setFromAxisAngle(ff, rollE));
+    const hp = follow ? new THREE.Vector3(s.px, P.hips.y * H, s.pz) // симуляция уже стоит в тазе клипа
+      : new THREE.Vector3(st.x, P.hips.y * H, st.z).addScaledVector(rr, -P.hips.x * H).addScaledVector(ff, P.hips.z * H);
+    // процедурная поза — до правки: смешиваются мировые повороты
+    const cur = this._guCur || (this._guCur = CLIP_ORDER.map(() => new THREE.Quaternion()));
+    CLIP_ORDER.forEach((name, i) => B[name].getWorldQuaternion(cur[i]));
+    const hip0 = B.Hips.getWorldPosition(new THREE.Vector3());
+    CLIP_ORDER.forEach((name, i) => {
+      const q = _q2.copy(/Arm|Hand/.test(name) ? Eb : E).multiply(yawQ).multiply(P.get(name)).multiply(R[name].q);
+      setWorldQuat(B[name], Wr < 1 ? cur[i].slerp(q, Wr) : q);
+      if (name === 'Hips') B.Hips.position.copy(B.Hips.parent.worldToLocal(hip0.lerp(hp, Wh)));
+    });
+    // кисть — не ниже покрытия (+3 см): рука целиком поворачивается в плече в вертикальной плоскости, где лежит кисть,
+    // форма руки сохраняется — при быстром падении кисть отъезжает по покрытию от плеча. Поворот вокруг заданной оси
+    // (продольной, линии плечо — кисть для локтя) двузначен: у нижней точки окружности решение перескакивало, и предплечье
+    // проворачивалось на 90–300° за кадр. Здесь ось горизонтальна и поперёк направления на кисть — она вырождается только
+    // для кисти точно под плечом, а там кисть до покрытия не достаёт
+    ['Left', 'Right'].forEach((side) => {
+      const arm = B[side + 'Arm'], S = arm.getWorldPosition(_v1), J = B[side + 'Hand'].getWorldPosition(_v2);
+      if (J.y >= 0.03) return;
+      const d0 = _v3.subVectors(J, S), len = d0.length(), hz = Math.hypot(d0.x, d0.z);
+      if (hz < 1e-3) return;
+      const yT = Math.max(-len * 0.98, Math.min(len * 0.98, 0.03 - S.y)), k = Math.sqrt(Math.max(0, len * len - yT * yT)) / hz;
+      _q4.setFromUnitVectors(d0.normalize(), _v4.set(d0.x * k, yT / len, d0.z * k).normalize());
+      setWorldQuat(arm, _q4.multiply(arm.getWorldQuaternion(new THREE.Quaternion())));
+    });
   }
 
   // Предел голеностопа относительно голени: подъём стопы (от положения покоя; > 0 — носок оттянут) в [lo, hi], скрут

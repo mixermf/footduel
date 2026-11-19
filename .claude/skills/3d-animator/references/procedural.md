@@ -136,6 +136,19 @@ first-person viewmodels. Numbers are measured unless marked **(estimate)**.
   switches (swing → planted at a take-off) toggle the limit's weight; ease the weight in time, faster on than
   off (a 46° pop dropped to under 30°); (3) eased weights carry stale values across replay cuts; snap them on
   reset. Probe: per-frame flexion, twist and toe-direction change minus shin change, per scene.
+- **Hand a procedural segment over to a clip on the clip's own first frame.** Build the keys before the clip
+  from its start pose (for a get-up: the seated start pose rolled back about the pelvis gives "landed on the
+  back, legs up"; easing the roll to zero lands exactly on frame 0). Blend the whole-body world rotations, not
+  local ones, and take the pelvis height from the simulation's own drop progress, not a timer (a timed blend
+  dropped the pelvis 18 cm in one frame). Start the blend while still airborne, where the procedural pose is
+  moving anyway: switching at touchdown showed the procedural landing's 45° arm pops. If gameplay state keeps
+  the feet (contacts, colliders), export a small foot and pelvis table from the same clip and let the simulation
+  follow it, so the exit back to procedural standing has nothing to slide (measured 0.1 cm at the exit).
+- **Keep hands above the ground by rotating the arm in the vertical plane of its own heading.** A lift about a
+  fixed axis (body axis, shoulder–hand line for the elbow) has two solutions; "nearest" and "outward" both flip
+  where the joint passes the bottom of the circle (90–300° in one frame), and side memory makes it worse when the
+  correction is recomputed from a fresh pose every frame. Do not roll the arms with a side roll of the body:
+  the lower arm ends up under the torso.
 - **Swung limbs in polar terms around the shoulder:** slerp the direction from where the clip left the hand to
   the target and change the distance one way only, so the elbow opens or closes once.
 
