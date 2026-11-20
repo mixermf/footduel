@@ -1,5 +1,6 @@
 // Единый набор игровых действий для клавиатуры и геймпада.
 // Разделены удержание и события нажатия; автоповтор клавиш не создаёт событий.
+import { t } from '../i18n/i18n.js';
 
 export const DEFAULT_KEYS = {
   // стрелки — бег и направление мяча; D — удар, W — ускорение, A — навес (без мяча подкат), Q — суперудар,
@@ -194,12 +195,12 @@ export class Input {
   }
 
   hintFor(action) {
-    if (this.lastDevice === 'keyboard') return KEY_LABEL[this.keys[action]?.[0]] || this.keys[action]?.[0]?.replace(/^Key/, '') || '?';
+    if (this.lastDevice === 'keyboard') { const k = this.keys[action]?.[0], l = KEY_LABEL[k]; return (typeof l === 'function' ? l() : l) || k?.replace(/^Key/, '') || '?'; }
     const names = this.lastDevice === 'playstation' ? PS_NAMES : XBOX_NAMES;
     return names[this.pad[action]] ?? '?';
   }
 }
 
-const KEY_LABEL = { Space: 'Пробел', Escape: 'Esc', Enter: 'Enter', ShiftLeft: 'Shift', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→' };
+const KEY_LABEL = { Space: () => t('key.space'), Escape: 'Esc', Enter: 'Enter', ShiftLeft: 'Shift', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→' };
 const XBOX_NAMES = { 0: 'A', 1: 'B', 2: 'X', 3: 'Y', 4: 'LB', 5: 'RB', 6: 'LT', 7: 'RT', 9: 'Menu' };
 const PS_NAMES = { 0: '×', 1: '○', 2: '□', 3: '△', 4: 'L1', 5: 'R1', 6: 'L2', 7: 'R2', 9: 'Options' };

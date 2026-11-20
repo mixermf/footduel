@@ -199,7 +199,7 @@ export function stepBall(b, dt, P, events, bodyHook) {
       }
       // гол: весь мяч за линией внутри рамы
       if (!behind || walled) b.inGoal = false;
-      else if (inBox && b.x * sx - r > gx && !b.inGoal) { b.inGoal = true; events.push({ type: 'goal_line', side: sx }); }
+      else if (inBox && b.x * sx - r > gx && !b.inGoal) { b.inGoal = true; events.push({ type: 'goal_line', side: sx, y: b.y, z: b.z }); } // y, z — где мяч зашёл: по ним видно «девятку»
     }
 
     if (bodyHook) bodyHook(b, h);

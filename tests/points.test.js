@@ -75,3 +75,19 @@ test('очки, часы и удар в полёте переживают сох
   assert.deepEqual(v.points, [250, -50]); assert.equal(v.clock, 77.5); assert.equal(v.shot.bar, 1);
   assert.equal(v.hash(), w.hash());
 });
+
+test('гол в девятку: база corner вместо goal, бонусы сверху с тем же пределом; зона — 1,5 диаметра мяча у угла', () => {
+  const w = duel(), S = w.P.match.points, F = w.P.field, r = w.P.ball.radius;
+  const zone = r + S.cornerZone * 2 * r, top = F.goalHeight - F.postRadius, side = F.goalWidth / 2 - F.postRadius;
+  const line = (gapY, gapZ, sz = 1) => ({ type: 'goal_line', side: 1, y: top - gapY, z: sz * (side - gapZ) });
+  w.shot = shot(0); assert.equal(w._goalPoints(0, line(r, r)).pts, S.corner, 'впритирку к углу');
+  w.shot = shot(0); assert.equal(w._goalPoints(0, line(zone, zone, -1)).pts, S.corner, 'граница зоны, второй угол');
+  w.shot = shot(0); assert.equal(w._goalPoints(0, line(zone + 0.01, r)).pts, S.goal, 'ниже зоны — обычный гол');
+  w.shot = shot(0); assert.equal(w._goalPoints(0, line(r, zone + 0.01)).pts, S.goal, 'ближе к центру — обычный гол');
+  w.shot = shot(0); assert.equal(w._goalPoints(0, null).pts, S.goal, 'без точки пересечения — обычный гол');
+  w.shot = shot(0, { volley: true }); assert.equal(w._goalPoints(0, line(r, r)).pts, S.corner + S.volley);
+  w.shot = shot(0, { bike: true, dist: 16, speed: 30, bar: 1 }); assert.equal(w._goalPoints(0, line(r, r)).pts, S.corner + S.cap, 'предел бонусов поверх девятки');
+  w.shot = shot(1); assert.equal(w._goalPoints(0, line(r, r)).pts, S.own, 'автогол в девятку — только база автогола');
+  assert.deepEqual(w._goalPoints(0, line(r, r)).bonus[0], ['own', S.own]);
+  w.shot = shot(0); assert.deepEqual(w._goalPoints(0, line(r, r)).bonus[0], ['corner', S.corner]);
+});

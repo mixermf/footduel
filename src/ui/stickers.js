@@ -8,8 +8,8 @@ const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 
 // роли цвета: свой игрок, соперник, золото (бонусы, рекорды), штраф
-export const TONE = { me: 'me', foe: 'foe', gold: 'gold', bad: 'bad' };
-const LIFE = { s: 800, m: 1050, l: 1250 }; // мс; совпадает с длительностью анимаций в CSS
+export const TONE = { me: 'me', foe: 'foe', gold: 'gold', bad: 'bad', steel: 'steel' }; // steel — металл: штанга, перекладина
+const LIFE = { s: 900, m: 1000, l: 1150 }; // мс; совпадает с длительностью анимаций в CSS
 
 // искры-ромбики, разлетающиеся из центра node (CSS-анимация stkSpark); при сниженной анимации не рисуются
 export function sparks(node, n, tone) {
@@ -75,19 +75,20 @@ export class Stickers {
     setTimeout(() => { node.remove(); this.s = this.s.filter((q) => q !== item); }, LIFE.s);
   }
 
-  // M: трюк-стикер у игрока. prio: чем выше, тем важнее; слабый трюк не сбивает сильный, пока тот на экране
-  trick(text, p, { tone = TONE.me, prio = 1 } = {}) {
+  // M: трюк-стикер у игрока (или у мяча: p — любая точка { x, y, z }, lift — насколько выше неё).
+  // prio: чем выше, тем важнее; слабый трюк не сбивает сильный, пока тот на экране
+  trick(text, p, { tone = TONE.me, prio = 1, lift = 2.3 } = {}) {
     if (this.busy()) return;
     const now = performance.now();
     if (this.m && now < this.m.until && this.m.prio > prio) return;
-    const at = this._anchor(p);
+    const at = this._anchor(p, lift);
     if (!at) return;
     if (this.m) this.m.node.remove();
     const node = el('div', 'stk stk-m ' + tone);
     node.style.left = at.x + 'px'; node.style.top = at.y + 'px';
     node.style.setProperty('--r', (Math.random() < 0.5 ? -5 : 4) + 'deg');
     node.append(this._label('stk-t', text));
-    this._sparks(node, 10, tone);
+    this._sparks(node, 8, tone);
     this.layer.append(node); this._fit(node);
     this.m = { node, prio, until: now + 500 };
     setTimeout(() => node.remove(), LIFE.m);
@@ -102,7 +103,7 @@ export class Stickers {
     node.style.setProperty('--r', (Math.random() < 0.5 ? -4 : 3) + 'deg');
     node.append(this._label('stk-t', text));
     if (sub) node.append(el('span', 'stk-sub', sub));
-    this._sparks(node, 16, tone);
+    this._sparks(node, 14, tone);
     const flare = el('i', 'stk-flare'); node.prepend(flare);
     this.layer.append(node);
     this.l = node; this._lUntil = now + LIFE.l;

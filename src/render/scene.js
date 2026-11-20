@@ -209,7 +209,11 @@ export class GameScene {
   // Полотна стоят там же, где их считает симуляция; низ задней сетки отнесён дальше — туда мяч не долетает, это запас полотна.
   _buildGoals(F) {
     const L = F.length, gw = F.goalWidth, gh = F.goalHeight, s = this.scene;
-    const postMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0.05 });
+    // у каждых ворот своя рама: при ударе в штангу или перекладину она вспыхивает (frameHit)
+    const sideMat = {};
+    for (const sx of [-1, 1]) sideMat[sx] = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0.05, emissive: 0x000000 });
+    this.frameMat = sideMat; this.frameGlow = { [-1]: 0, 1: 0 }; this._frameCol = { [-1]: new THREE.Color(), 1: new THREE.Color() };
+    let postMat = sideMat[1];
     const UPV = new THREE.Vector3(0, 1, 0), V = (a, b, c) => new THREE.Vector3(a, b, c);
     const tube = (a, b, rad, shadow = false) => {
       const d = b.clone().sub(a), len = d.length();
@@ -229,6 +233,7 @@ export class GameScene {
     const bump = (a, b, w, h) => Math.sin(Math.PI * a / w) * Math.sin(Math.PI * b / h);
     this.nets = [];
     for (const sx of [-1, 1]) {
+      postMat = sideMat[sx];
       const x = sx * (L / 2 - gi), xb = sx * (L / 2 + F.goalBack), xbb = xb + sx * slope; // линия ворот, верх и низ задней сетки
       for (const sz of [-1, 1]) {
         const z = sz * gw / 2;
@@ -457,6 +462,13 @@ export class GameScene {
     this.flashT = 0; this.flashS = 0.6 + strength;
   }
 
+  // вспышка рамы ворот side (-1 левые, 1 правые): k — сила 0..1, color — цвет свечения (металл — белый, девятка — золото)
+  frameHit(side, k = 1, color = 0xfff4d0) {
+    if (!this.frameMat) return;
+    this.frameGlow[side] = Math.max(this.frameGlow[side], 0.45 + 0.55 * k);
+    this._frameCol[side].set(color);
+  }
+
   setView(view) { this.view = view; this.resize(); }
 
   resize() {
@@ -544,6 +556,12 @@ export class GameScene {
   }
 
   render(dt) {
+    if (this.frameMat) for (const sx of [-1, 1]) {
+      const g = this.frameGlow[sx];
+      if (g <= 0) continue;
+      this.frameGlow[sx] = Math.max(0, g - dt / 0.35); // гаснет за ~0,35 с
+      this.frameMat[sx].emissive.copy(this._frameCol[sx]).multiplyScalar(this.frameGlow[sx] * 0.9);
+    }
     if (this.flashT < 1) {
       this.flashT += dt / 0.18;
       const u = Math.min(1, this.flashT);

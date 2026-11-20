@@ -5,12 +5,56 @@
 // мяч — нет. Поэтому игра — это перестрелка: взять мяч на своей половине, вывести его к удобной точке и пробить,
 // а когда мяч у соперника или летит к своим воротам — встать между мячом и воротами в стойку и принять удар.
 //
-// Уровни сложности — один и тот же мозг с разными параметрами (BOT_LEVELS). Все случайные решения — из собственного
-// генератора с зерном: матч бота повторяется при том же зерне.
+// Сложность — число от 0 до 100 (botParams): один и тот же мозг, параметры которого плавно растут со сложностью.
+// Две группы параметров:
+//   • навыки — непрерывные величины: задержка реакции, скорость, точность прицела, позиция в обороне;
+//   • события — вероятности сложных решений. Бот бросает кубик один раз на «эпизод» (с каждого касания мяча любым
+//     игроком до следующего) и весь эпизод действует по выпавшему: прочитал ли траекторию с отскоками (predict), бьёт ли
+//     летящий мяч в касание (strike), в прыжке (jumpStrike), перекрывает ли высокий удар прыжком (jumpBlock), отходит ли под
+//     навес (lobCover). На заполненную шкалу: суперудар (superShot); на выход к удару: навес через выбежавшего соперника (lob).
+//   Чем выше сложность, тем чаще выпадает удачное решение и тем меньше ошибка в нём; у среднего бота (50) сложные действия
+//   уже случаются, но редко; 100 — почти без ошибок и с самой быстрой реакцией (всё равно без подсказок симуляции).
+// Именованные уровни — точки на этой шкале (BOT_PRESETS). Все случайные решения — из собственных генераторов с зерном:
+// матч бота повторяется при том же зерне.
 import { createRng } from '../sim/rng.js';
 import { emptyInput } from '../sim/world.js';
 import { stepBall } from '../sim/ball.js';
 
+export const BOT_PRESETS = { easy: 20, medium: 50, hard: 80 };
+// опорные точки шкалы; между ними параметры меняются линейно (в точках 20/50/80 — прежние лёгкий/средний/сложный)
+const KNOTS = [0, 20, 50, 80, 100];
+const CURVE = {
+  latency: [0.36, 0.3, 0.25, 0.2, 0.14], react: [0.45, 0.36, 0.2, 0.1, 0.06], speed: [0.62, 0.72, 0.88, 1, 1],
+  sprint: [0, 0.1, 0.5, 0.95, 1], line: [3.8, 3.2, 1.8, 0.9, 0.7], carry0: [0.3, 0.4, 0.6, 0.8, 0.9], carry1: [1, 1.2, 1.8, 2.4, 2.6],
+  charge0: [0.2, 0.25, 0.5, 0.7, 0.75], charge1: [0.5, 0.6, 0.85, 1, 1], aimErr: [0.8, 0.6, 0.35, 0.15, 0.06],
+  corner: [0, 0.2, 0.6, 0.95, 1], low: [0.2, 0.3, 0.5, 0.7, 0.75], keep: [1.3, 1.6, 2.4, 3.2, 3.4],
+  guard: [0.2, 0.35, 0.75, 1, 1], lunge: [0, 0.1, 0.5, 0.9, 1], firstTime: [0, 0, 0.3, 0.7, 0.9], hesitate: [0.4, 0.3, 0.12, 0.02, 0],
+  // события: вероятность на эпизод / на попытку
+  predict: [0, 0.05, 0.45, 0.92, 1], strike: [0, 0, 0.25, 0.8, 0.95], jumpStrike: [0, 0, 0.2, 0.85, 1],
+  jumpBlock: [0, 0, 0.35, 0.92, 1], lobCover: [0, 0, 0.35, 0.92, 1], superShot: [0, 0, 0.2, 0.9, 1], lob: [0, 0, 0.12, 0.3, 0.4],
+  // навес требует остановиться: с какой скорости, м/с, бот уже подсекает мяч (меньше — точнее, но дольше)
+  lobStill: [2, 1.8, 1.2, 0.6, 0.3],
+};
+
+// имя уровня или число → число 0..100
+export function botSkill(level) {
+  const n = typeof level === 'number' ? level : typeof level === 'string' && level in BOT_PRESETS ? BOT_PRESETS[level] : Number(level);
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : BOT_PRESETS.medium;
+}
+
+// словесная ступень для подписи в меню: лёгкий, средний, сложный, легенда
+export function botTier(skill) { return skill < 35 ? 'easy' : skill < 65 ? 'medium' : skill < 90 ? 'hard' : 'legend'; }
+
+export function botParams(level) {
+  const s = botSkill(level);
+  let i = 0; while (i < KNOTS.length - 2 && s > KNOTS[i + 1]) i++;
+  const u = (s - KNOTS[i]) / (KNOTS[i + 1] - KNOTS[i]), L = { skill: s };
+  for (const k in CURVE) L[k] = CURVE[k][i] + (CURVE[k][i + 1] - CURVE[k][i]) * u;
+  L.carry = [L.carry0, L.carry1]; L.charge = [L.charge0, L.charge1];
+  return L;
+}
+
+// Смысл параметров (botParams):
 // latency — задержка восприятия, с: бот видит мир таким, каким он был latency секунд назад (у человека реакция на удар —
 // 0,2–0,25 с), ничего «живого» в обход этой задержки он не читает, кроме своего тела и мяча у своей ноги;
 // react — как часто бот обновляет картину (между обновлениями действует по старой);
@@ -20,40 +64,56 @@ import { stepBall } from '../sim/ball.js';
 // charge — заряд удара (мин..макс); aimErr — разброс прицела (доля полуширины ворот); corner — насколько точно выбирает угол
 // дальше от соперника (0 — случайно, 1 — всегда); low — доля низовых ударов;
 // keep — где бот стоит в обороне, м от своих ворот (дальше — меньше угол для удара, но выше риск навеса); guard — держит стойку, когда соперник бьёт; lunge — рывок в стойке
-// к мячу, идущему мимо; firstTime — бьёт ли в касание по мячу, катящемуся на свою половину; superShot — пользуется суперударом;
-// predict — просчитывает полёт мяча с отскоками от покрытия и бортов (та же физика, что в игре) и бежит к точке, где
-// мяч можно взять на своей половине, а не за мячом; strike — доля решений отбить летящий мяч сразу ударом в касание;
-// jumpStrike — бьёт ли по высокому мячу в прыжке; jumpBlock — прыгает ли, чтобы корпусом перекрыть высокий удар;
-// lobCover — доля решений отступить под навес, который проходит над ботом и опускается в створ (нужен predict);
-// lob — навес через соперника, стоящего далеко от своих ворот (выключен на всех уровнях: по замеру навес бота заходит в 5 %
-// случаев против 55 % у обычного удара — прицел навеса для бота ещё не подобран); hesitate — доля «картин», на которых бот на миг теряется
-export const BOT_LEVELS = {
-  easy: { label: 'Лёгкий', latency: 0.3, react: 0.36, speed: 0.72, sprint: 0.1, line: 3.2, carry: [0.4, 1.2], charge: [0.25, 0.6], aimErr: 0.6, corner: 0.2, low: 0.3,
-    keep: 1.6, guard: 0.35, lunge: 0.1, firstTime: 0, superShot: false, lob: 0, hesitate: 0.3,
-    predict: false, strike: 0, jumpStrike: false, jumpBlock: 0, lobCover: 0 },
-  medium: { label: 'Средний', latency: 0.25, react: 0.2, speed: 0.88, sprint: 0.5, line: 1.8, carry: [0.6, 1.8], charge: [0.5, 0.85], aimErr: 0.35, corner: 0.6, low: 0.5,
-    keep: 2.4, guard: 0.75, lunge: 0.5, firstTime: 0.3, superShot: false, lob: 0, hesitate: 0.12,
-    predict: false, strike: 0, jumpStrike: false, jumpBlock: 0, lobCover: 0 },
-  hard: { label: 'Сложный', latency: 0.2, react: 0.1, speed: 1, sprint: 0.95, line: 0.9, carry: [0.8, 2.4], charge: [0.7, 1], aimErr: 0.15, corner: 0.95, low: 0.7,
-    keep: 3.2, guard: 1, lunge: 0.9, firstTime: 0.7, superShot: true, lob: 0, hesitate: 0.02,
-    predict: true, strike: 0.8, jumpStrike: true, jumpBlock: 0.95, lobCover: 0.95 },
-};
+// к мячу, идущему мимо; firstTime — бьёт ли в касание по мячу, катящемуся на свою половину; hesitate — доля «картин»,
+// на которых бот на миг теряется.
+// События (вероятности): predict — в этом эпизоде просчитывает полёт мяча с отскоками от покрытия и бортов (та же физика,
+// что в игре) и бежит к точке, где мяч можно взять на своей половине, а не за мячом (без него недоступны strike, jumpBlock,
+// lobCover); strike — отбивает летящий мяч сразу ударом в касание; jumpStrike — бьёт по высокому мячу в прыжке;
+// jumpBlock — прыгает, чтобы корпусом перекрыть высокий удар; lobCover — отступает под навес, который проходит над ботом
+// и опускается в створ; superShot — пускает в ход заполненную шкалу суперудара (решение — одно на шкалу); lob — навес через соперника, выбежавшего далеко
+// от своих ворот (перед подсечкой бот тормозит до lobStill м/с: с хода навес неточен).
+export const BOT_LEVELS = { easy: botParams('easy'), medium: botParams('medium'), hard: botParams('hard') };
+
+// касания, с которых начинается новый эпизод (траектория мяча меняется не по физике полёта)
+const TOUCHES = new Set(['kick', 'touch', 'receive', 'header', 'body', 'tackle']);
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
 export class Bot {
-  // me — номер игрока бота в мире дуэли (0 или 1); level — ключ BOT_LEVELS или объект с теми же полями
+  // me — номер игрока бота в мире дуэли (0 или 1); level — сложность 0..100, имя уровня (BOT_PRESETS) или объект параметров
   constructor(me, level = 'medium', seed = 1) {
     this.me = me;
     this.setLevel(level);
     this.rng = createRng((seed * 2654435761) >>> 0 || 1);
+    this.rng2 = createRng(((seed * 40503) ^ 0x9e3779b9) >>> 0 || 7); // кубики событий: отдельный поток, не сдвигает остальные решения
     this.out = emptyInput();
     this.reset();
   }
 
-  setLevel(level) { this.L = typeof level === 'string' ? { ...BOT_LEVELS[level] } : { ...level }; this.level = level; }
+  setLevel(level) {
+    this.L = typeof level === 'object' && level ? { ...botParams(level.skill ?? 'medium'), ...level } : botParams(level);
+    this.level = level; this.skill = this.L.skill;
+  }
+
+  // бросить кубики на эпизод: всегда одинаковое число бросков, чтобы поток не зависел от уровня
+  // Каждое событие выпадает со своей вероятностью из таблицы, независимо от predict: чтобы ударить в касание, перекрыть или
+  // уйти под навес, бот в этом эпизоде считает полёт мяча (read), но выбегать в точку перехвата по прогнозу — только при predict
+  _rollEpisode() {
+    const L = this.L, r = () => this.rng2.next();
+    const ep = this.ep = { predict: r() < L.predict, strike: r() < L.strike, jump: r() < L.jumpStrike, block: r() < L.jumpBlock, cover: r() < L.lobCover };
+    ep.read = ep.predict || ep.strike || ep.jump || ep.block || ep.cover;
+    if (!ep.read) this.path = null;
+  }
+
+  // суперудар: решение — один раз на заполненную шкалу; отказ пересматривается не раньше чем через 15 с
+  _superOk(p) {
+    if (p.superCharge < 1) { this.supOk = null; return false; }
+    if (this.supOk === null) { this.supOk = this.rng2.next() < this.L.superShot; this.supT = 0; }
+    return this.supOk;
+  }
 
   reset() {
+    this.ep = null; this.wantLob = false; this.settleT = 0; this.supOk = null; this.supT = 0;
     this.seen = null; this.seenT = 1e9; this.roll = 0; this.hes = 0;
     this.shot = null; this.ft = null; this.carryT = 0; this.carryMax = 1; this.spot = null;
     this.lungeCd = 0; this.dir = { x: 0, z: 0 }; this.path = null; this.jumpCd = 0; this.roll2 = 0;
@@ -93,8 +153,13 @@ export class Bot {
     const L = this.L, dt = w.dt, o = this.out, p = w.players[this.me], q = w.players[1 - this.me], b = w.ball;
     Object.assign(o, emptyInput());
     o.digital = false; // аналоговый стик: прицел следует за направлением, а не накапливается
-    if (w.phase !== 'play' || !p || !q) { this.shot = this.ft = this.spot = null; this.seen = null; this.carryT = 0; this.ringN = 0; return o; }
+    if (w.phase !== 'play' || !p || !q) { this.shot = this.ft = this.spot = null; this.seen = null; this.carryT = 0; this.ringN = 0; this.ep = null; return o; }
     this._observe(b, q);
+    // новый эпизод — с любого касания мяча (события прошлого шага): кубики сложных решений бросаются заново
+    let touched = !this.ep;
+    for (const e of w.events) if (TOUCHES.has(e.type)) { touched = true; break; }
+    if (touched) this._rollEpisode();
+    if (this.supOk === false && (this.supT += dt) > 15) this.supOk = null; // отказ от суперудара пересматривается
     const F = w.P.field, side = p.side, att = -side;
     const gx = att * (F.length / 2 - F.goalInset), ownX = -gx; // линии атакуемых и своих ворот
     // ---------- восприятие с задержкой: картина обновляется раз в react секунд (с разбросом)
@@ -105,7 +170,7 @@ export class Bot {
       this.seen = { bx: d.x, bz: d.z, by: d.y, bvx: d.vx, bvz: d.vz, bvy: d.vy, qx: d.ox, qz: d.oz, qkick: d.okick };
       this.roll = this.rng.next(); // одно решение на картину: ускорение и стойка не мигают каждый шаг
       this.roll2 = this.rng.next();
-      this.path = L.predict ? this._path(w, d) : null;
+      this.path = this.ep.read ? this._path(w, d) : null;
       this.hes = this.rng.next() < L.hesitate ? L.react * 0.8 : 0;
     }
     const S = this.seen, age = this.seenT + this.lag; // возраст картины: задержка восприятия плюс время с обновления
@@ -118,14 +183,14 @@ export class Bot {
 
     // ---------- с мячом: ведение к точке удара и удар
     if (p.possession && !p.juggle) return this._attack(w, p, q, o, gx, att, side);
-    this.carryT = 0; this.spot = null;
+    this.carryT = 0; this.spot = null; this.settleT = 0;
 
     // где мяч в голове бота: увиденное положение плюс снос по увиденной скорости
     const E = this._estimate(S, age), ex = E.x, evx = S.bvx;
     // ---------- мяч летит к боту и его можно встретить ударом: отбить сразу (в прыжке, если высоко)
     // решение — только по увиденному: мяч, каким его видит бот, летит и близко, и с картины мяч никто не трогал
     // (иначе настоящий мяч уже не там, где думает бот, и бот об этом знать не может)
-    if (this.path && this.roll2 < L.strike && this.seenT < w.dt * 1.5 && Math.hypot(E.x - b.x, E.z - b.z) < 0.6) {
+    if (this.path && (this.ep.strike || this.ep.jump) && this.seenT < w.dt * 1.5 && Math.hypot(E.x - b.x, E.z - b.z) < 0.6) {
       const hit = this._strikeChance(w, p, side, age, E);
       if (hit) { this.ft = { t: 0, hold: 0.2 + 0.3 * L.charge[1], lat: this._aimLat(S.qz), jump: hit.high }; return this._firstTime(w, p, o); }
     }
@@ -143,7 +208,7 @@ export class Bot {
   _chase(w, p, o, gx, ownX, att, side, S, age, b) {
     const L = this.L, F = w.P.field, sp = w.P.player.sprintSpeed * L.speed; // b — мяч, каким его видит бот
     let tx = S.bx, tz = S.bz;
-    const catchAt = this.path ? this._catchPoint(w, p, side, age, sp) : null;
+    const catchAt = this.path && this.ep.predict ? this._catchPoint(w, p, side, age, sp) : null;
     if (catchAt) { tx = catchAt.x; tz = catchAt.z; } // где мяч окажется низко и в досягаемости — с учётом отскоков
     else for (let i = 0; i < 4; i++) { const t = Math.min(1.5, Math.hypot(tx - p.x, tz - p.z) / sp + age); tx = S.bx + S.bvx * t * 0.75; tz = S.bz + S.bvz * t * 0.75; }
     // подходить со стороны своих ворот: тогда первое касание сразу ведёт мяч вперёд
@@ -181,7 +246,7 @@ export class Bot {
     let t = (lineX - S.bx) / (S.bvx || 1e-6); // когда мяч пересечёт линию, где стоит бот
     let tz = S.bz + S.bvz * Math.max(0, t);
     let onTarget = Math.abs(S.bz + S.bvz * Math.max(0, (ownX - S.bx) / (S.bvx || 1e-6))) < F.goalWidth / 2 + 0.4;
-    if (this.path) {
+    if (this.path && this.ep.predict) {
       // по прогнозу полёта: с подкруткой и отскоком мяч приходит не туда, куда смотрит его скорость сейчас
       const c = this._crossingX(lineX), g = this._crossingX(ownX);
       if (c) { t = c.t; tz = c.z; }
@@ -192,7 +257,7 @@ export class Bot {
     const dz = tz - p.z, dx = lineX - p.x;
     const tLeft = t - age;
     // навес над головой в створ: отойти туда, где мяч опустится до досягаемости, и встретить его корпусом (в прыжке, если высоко)
-    if (this.path && this.roll < L.lobCover) {
+    if (this.path && this.ep.cover) {
       const lc = this._lobCover(w, p, ownX, att, age);
       if (lc) {
         if (lc.jump && p.y <= 0 && this.jumpCd <= 0 && lc.tt < 0.36 && Math.hypot(lc.x - p.x, lc.z - p.z) < 0.6) { o.jumpPressed = true; this.jumpCd = 1; }
@@ -201,7 +266,7 @@ export class Bot {
       }
     }
     // высокий мяч идёт в корпус выше головы: прыжок без направления, корпус перекрывает удар
-    if (this.path && this.jumpCd <= 0 && p.y <= 0 && this.roll < L.jumpBlock) {
+    if (this.path && this.jumpCd <= 0 && p.y <= 0 && this.ep.block) {
       const c = this._crossing(p, age);
       if (c && c.y > 1.5 && c.y < 2.65 && Math.abs(c.z - p.z) < 0.6 && c.t > 0.22 && c.t < 0.36) {
         o.guardHeld = false; o.jumpPressed = true; this.jumpCd = 1;
@@ -226,6 +291,7 @@ export class Bot {
       this.carryMax = c0 + (c1 - c0) * this.rng.next();
       const zs = (this.rng.next() * 2 - 1) * 2.2;
       this.spot = { x: -att * (L.line + 0.4 * this.rng.next()), z: clamp(zs, -F.width / 2 + 1.2, F.width / 2 - 1.2) };
+      this.wantLob = this.rng2.next() < L.lob; this.settleT = 0; // на этом выходе к удару — навес, если соперник выбежит
     }
     this.carryT += dt;
     const sp = this.spot, dS = Math.hypot(sp.x - p.x, sp.z - p.z);
@@ -235,19 +301,24 @@ export class Bot {
     const ready = dS < 0.6 || this.carryT > this.carryMax || nearLine || (p.holdT || 0) > w.P.match.hold.warn - 0.3; // не доводить до штрафа за удержание
     // бить, только когда мяч у ноги и не уходит от неё: иначе за время заряда он укатится (у центральной линии — к сопернику)
     const away = Math.hypot(b.vx - p.vx, b.vz - p.vz), roomX = b.x * side;
-    if (ready && b.y < 0.4 && Math.hypot(b.x - p.x, b.z - p.z) < 0.85 && away < 1.6 && roomX > 0.5) {
-      const keeperFar = Math.abs(this.seen.qx - gx) > 3.2;
-      const lob = keeperFar && dGoal > 6 && dGoal < w.P.kick.lobMax - 1 && this.rng.next() < L.lob;
-      const sup = L.superShot && p.superCharge >= 1 && !lob;
+    if ((ready || this.settleT > 0) && b.y < 0.4 && Math.hypot(b.x - p.x, b.z - p.z) < 0.85 && away < 1.6 && roomX > 0.5) {
+      const K = w.P.kick, keeperFar = Math.abs(this.seen.qx - gx) > 3.2; // соперник выбежал из ворот
+      const lob = this.wantLob && keeperFar && dGoal > 5 && dGoal < K.lobMax - 1;
+      // подсечка — с места: сначала погасить ход (точность навеса падает со скоростью), но не дольше 0,8 с
+      if (lob && Math.hypot(p.vx, p.vz) > L.lobStill && this.settleT < 0.8) { this.settleT += dt; this._move(o, 0, 0, false); return o; }
+      const sup = !lob && this._superOk(p);
       const [c0, c1] = L.charge;
       const low = this.rng.next() < L.low;
-      let hold = (c0 + (c1 - c0) * this.rng.next()) * w.P.kick.chargeTime;
-      if (lob) { // у навеса заряд задаёт дальность: мяч должен опуститься под перекладину, а не за воротами
-        const K = w.P.kick, want = clamp((dGoal - 0.6 - K.lobMin) / (K.lobMax - K.lobMin), 0, 1);
-        hold = clamp(want + (this.rng.next() * 2 - 1) * L.aimErr * 0.15, 0, 1) * K.chargeTime;
+      let hold = (c0 + (c1 - c0) * this.rng.next()) * K.chargeTime, high = low ? -0.6 : 0.1 + 0.3 * this.rng.next(), lat = this._aimLat(this.seen.qz);
+      if (lob) {
+        // у навеса заряд задаёт дальность: мяч должен опуститься уже за линией ворот, под перекладиной, а не за воротами;
+        // соперник рядом — дуга выше (над прыжком), далеко — площе и быстрее; угол — не в самую штангу
+        const want = clamp((dGoal + 0.4 - K.lobMin) / (K.lobMax - K.lobMin), 0, 1);
+        hold = clamp(want + (this.rng.next() * 2 - 1) * L.aimErr * 0.12, 0, 1) * K.chargeTime;
+        high = Math.hypot(this.seen.qx - p.x, this.seen.qz - p.z) < 4 ? 0.5 : -0.3; lat *= 0.6;
       }
-      this.shot = { t: 0, hold, lat: this._aimLat(this.seen.qz), high: lob ? 0.2 : low ? -0.6 : 0.1 + 0.3 * this.rng.next(), lob, sup };
-      this.spot = null; this.carryT = 0;
+      this.shot = { t: 0, hold, lat, high, lob, sup };
+      this.spot = null; this.carryT = 0; this.settleT = 0;
       return this._shoot(w, p, o);
     }
     this._goto(o, p, sp.x, sp.z, this.roll < L.sprint * 0.6 && dS > 2, 0.85);
@@ -318,8 +389,9 @@ export class Bot {
     const k = this._fk || (this._fk = {});
     // удар в прыжке — только по мячу медленнее 13 м/с (навес, отскок, пас): быстрый высокий удар в створ по замеру надёжнее перекрыть
     // прыжком корпусом (упражнение «высокий удар»: прыжок-блок брал 13 из 13, удар в прыжке пропускал каждый второй)
-    const jumpOk2 = L.jumpStrike && Math.hypot(b.vx, b.vz) < 13;
-    for (const jumpOk of jumpOk2 ? [false, true] : [false]) {
+    const jumpOk2 = this.ep.jump && Math.hypot(b.vx, b.vz) < 13;
+    for (const jumpOk of [false, true]) {
+      if (jumpOk ? !jumpOk2 : !this.ep.strike) continue; // с земли — по кубику strike, в прыжке — по кубику jumpStrike
       Object.assign(k, { type: 'shot', ax, az, jumpOk, commitTick: 0, bike: false, fly: 0, footSide: 1, dynamic: false });
       const pl = w._strikePlan(p, k);
       if (pl && pl.bx * side > 0.3 && pl.t > 0.12) return { t: pl.t, high: jumpOk };

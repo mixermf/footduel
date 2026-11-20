@@ -4,6 +4,7 @@
 // Только изображение: симуляцию не трогает. Экран — маленький холст с пикселем = светодиод (NearestFilter),
 // поверх — сетка светодиодов (aoMap). Материал неосвещённый и без тонмаппинга, чтобы жёлтый не выгорал в ACES.
 import * as THREE from 'three';
+import { t } from '../i18n/i18n.js';
 
 const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 const ROWS = 24; // строк светодиодов по высоте экрана
@@ -51,7 +52,7 @@ const GLYPHS = {
   G: '.###.|#....|#....|#.###|#...#|#...#|.###.', O: '.###.|#...#|#...#|#...#|#...#|#...#|.###.', A: '.###.|#...#|#...#|#####|#...#|#...#|#...#',
   L: '#....|#....|#....|#....|#....|#....|#####', 'Г': '#####|#....|#....|#....|#....|#....|#....', 'О': '.###.|#...#|#...#|#...#|#...#|#...#|.###.',
   'Л': '..###|.#..#|.#..#|.#..#|.#..#|#...#|#...#', 'П': '#####|#...#|#...#|#...#|#...#|#...#|#...#', 'Б': '#####|#....|#....|####.|#...#|#...#|####.',
-  'Е': '#####|#....|#....|####.|#....|#....|#####', 'Д': '..##.|.#.#.|.#.#.|.#.#.|#...#|#####|#...#', 'А': '.###.|#...#|#...#|#####|#...#|#...#|#...#',
+  'Е': '#####|#....|#....|####.|#....|#....|#####', 'Д': '.###.|.#.#.|.#.#.|.#.#.|.#.#.|#####|#...#', 'А': '.###.|#...#|#...#|#####|#...#|#...#|#...#',
   'Н': '#...#|#...#|#...#|#####|#...#|#...#|#...#', 'И': '#...#|#...#|#..##|#.#.#|##..#|#...#|#...#', 'Ч': '#...#|#...#|#...#|.####|....#|....#|....#',
   'Ь': '#....|#....|#....|####.|#...#|#...#|####.', 'Я': '.####|#...#|#...#|.####|..#.#|.#..#|#...#', 'М': '#...#|##.##|#.#.#|#...#|#...#|#...#|#...#',
   'Т': '#####|..#..|..#..|..#..|..#..|..#..|..#..', 'К': '#...#|#..#.|#.#..|##...|#.#..|#..#.|#...#', 'З': '####.|....#|....#|.###.|....#|....#|####.',
@@ -61,7 +62,7 @@ const GLYPHS = {
   '6': '.###.|#....|#....|####.|#...#|#...#|.###.', '7': '#####|....#|...#.|..#..|.#...|.#...|.#...', '8': '.###.|#...#|#...#|.###.|#...#|#...#|.###.',
   '9': '.###.|#...#|#...#|.####|....#|....#|.###.',
 };
-const pixFits = (text) => [...text].every((ch) => ch === ' ' || GLYPHS[ch]);
+export const pixFits = (text) => [...text].every((ch) => ch === ' ' || GLYPHS[ch]);
 
 // надпись пиксельным шрифтом ×2 (14 строк) с обводками; лёгкий наклон: верхние строки сдвинуты вправо, как курсив
 function pixText(text, core, rim, edge, k = 2) {
@@ -93,9 +94,12 @@ Object.assign(GLYPHS, {
   K: '#...#|#..#.|#.#..|##...|#.#..|#..#.|#...#', N: '#...#|##..#|#.#.#|#..##|#...#|#...#|#...#', P: '####.|#...#|#...#|####.|#....|#....|#....',
   R: '####.|#...#|#...#|####.|#.#..|#..#.|#...#', S: '.####|#....|#....|.###.|....#|....#|####.', T: '#####|..#..|..#..|..#..|..#..|..#..|..#..',
   U: '#...#|#...#|#...#|#...#|#...#|#...#|.###.', Y: '#...#|#...#|.#.#.|..#..|..#..|..#..|..#..', Z: '#####|....#|...#.|..#..|.#...|#....|#####',
+  H: '#...#|#...#|#...#|#####|#...#|#...#|#...#', J: '..###|...#.|...#.|...#.|...#.|#..#.|.##..', M: '#...#|##.##|#.#.#|#...#|#...#|#...#|#...#',
+  Q: '.###.|#...#|#...#|#...#|#.#.#|#..#.|.##.#', V: '#...#|#...#|#...#|#...#|#...#|.#.#.|..#..', W: '#...#|#...#|#...#|#.#.#|#.#.#|##.##|#...#',
+  X: '#...#|#...#|.#.#.|..#..|.#.#.|#...#|#...#',
   '.': '.....|.....|.....|.....|.....|.##..|.##..', '·': '.....|.....|.....|.##..|.##..|.....|.....',
   'С': '.###.|#...#|#....|#....|#....|#...#|.###.', 'В': '####.|#...#|#...#|####.|#...#|#...#|####.', 'Р': '####.|#...#|#...#|####.|#....|#....|#....',
-  'Ы': '#...#|#...#|#...#|###.#|#.#.#|#.#.#|###.#', 'Ш': '#...#|#...#|#.#.#|#.#.#|#.#.#|#.#.#|#####', 'Ё': '.#.#.|#####|#....|####.|#....|#....|#####',
+  'Ы': '#...#|#...#|#...#|###.#|#.#.#|#.#.#|###.#', 'Ш': '#...#|#...#|#.#.#|#.#.#|#.#.#|#.#.#|#####', 'Ё': '.#.#.|#####|#....|####.|#....|#....|#####', 'У': '#...#|#...#|#...#|.####|....#|....#|.###.',
 });
 
 // ---------- вымышленные бренды: оригинальные значки из светодиодных «пикселей» ----------
@@ -145,15 +149,16 @@ const ICONS = {
   },
 };
 
-// цвет имени — фирменный (не белый: белое на дальнем борту спорит с мячом); слоганы — приглушённо-серые
+// цвет имени — фирменный (не белый: белое на дальнем борту спорит с мячом); слоганы — приглушённо-серые,
+// текст слогана — по языку игрока (slogan.<id> в src/i18n/i18n.js)
 export const BRANDS = [
-  { id: 'nyuk', name: 'NYUK', color: '#ff6a00', slogan: 'KICK FIRST. ASK LATER.' },
-  { id: 'cola', name: 'GOLAZO COLA', color: '#ff3b44', slogan: 'ПЕЙ ДО СВИСТКА' },
-  { id: 'zilla', name: 'BOOTZILLA', color: '#7cff2e', slogan: 'СТОМП!' },
-  { id: 'keepr', name: 'KEEPR', color: '#22d3ee', slogan: 'НИЧЕГО НЕ ПРОЙДЁТ' },
-  { id: 'burger', name: 'BALLBURGER', color: '#ffc21a', slogan: 'ЕШЬ КАК ЧЕМПИОН' },
-  { id: 'socks', name: 'ROCKET SOCKS', color: '#ff2ec4', slogan: 'БЫСТРЕЕ ВЕТРА' },
-  { id: 'cup', name: 'STREET CUP', color: '#ffd400', slogan: 'ARENA DUEL · 1 НА 1' },
+  { id: 'nyuk', name: 'NYUK', color: '#ff6a00' },
+  { id: 'cola', name: 'GOLAZO COLA', color: '#ff3b44' },
+  { id: 'zilla', name: 'BOOTZILLA', color: '#7cff2e' },
+  { id: 'keepr', name: 'KEEPR', color: '#22d3ee' },
+  { id: 'burger', name: 'BALLBURGER', color: '#ffc21a' },
+  { id: 'socks', name: 'ROCKET SOCKS', color: '#ff2ec4' },
+  { id: 'cup', name: 'STREET CUP', color: '#ffd400' },
 ];
 const SLOGAN = '#aeb8c6';
 
@@ -166,7 +171,7 @@ function adFrame(w, brand, alt) {
   g.fillStyle = BG; g.fillRect(0, 0, w, ROWS);
   const ic = icon(brand.id);
   const label = pixText(brand.name, brand.color, null, null, 2);
-  const slogan = pixText(brand.slogan, SLOGAN, null, null, 2);
+  const slogan = pixText(t('slogan.' + brand.id), SLOGAN, null, null, 2);
   const tileW = alt ? slogan.width + ROWS + 10 : ic.width + label.width + 4;
   if (w < tileW + 8) {
     const small = pixText(brand.name, brand.color, null, null, 1);
@@ -245,7 +250,6 @@ class Screen {
   show(frame) { this.g.drawImage(frame, 0, 0); this.tex.needsUpdate = true; }
 }
 
-const WORDS = ['ГОЛ!', 'GOAL!'];
 
 export class LedBoards {
   constructor(scene, F) {
@@ -263,13 +267,9 @@ export class LedBoards {
     // торцы: лицом в поле; поворот -sx·π/2 — текст читается слева направо с обеих сторон
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) plane(this.end, endLen, sx * (L / 2 - 0.006), sz * (gw / 2 + endLen / 2), -sx * Math.PI / 2);
     this.screens = [this.far, this.end];
-    // заготовки кадров рекламы: для каждого бренда имя и слоган, для дальнего борта и торцов
-    this.ads = BRANDS.map((b) => ({ far: [adFrame(this.far.w, b, false), adFrame(this.far.w, b, true)], end: adFrame(this.end.w, b, false) }));
     this._goalPal = [{ core: YEL, rim: '#ffffff' }, { core: '#ffffff', rim: YEL }];
-    this._goalCache = new Map();
-    // кадры гола готовим заранее: построение маски на лету дало бы рывок в первый же гол
     this._yellow = this.screens.map((s) => { const c = canvas(s.w, ROWS), g = c.getContext('2d'); g.fillStyle = YEL; g.fillRect(0, 0, s.w, ROWS); return c; });
-    for (let i = 0; i < 2; i++) this._goalFrames('w' + i, WORDS, BG, this._goalPal[i]);
+    this._build();
     this.slide = 0; this.alt = 0; this.holdT = HOLD * 0.6;
     this.trans = null; // переход между кадрами
     this.show = null; // постановка (гол, финал)
@@ -278,12 +278,27 @@ export class LedBoards {
     for (const s of this.screens) s.show(this._adFrame(s));
   }
 
+  // кадры, зависящие от языка: реклама (слоганы) и надписи гола. Кадры гола готовим заранее —
+  // построение маски на лету дало бы рывок в первый же гол
+  _build() {
+    this.ads = BRANDS.map((b) => ({ far: [adFrame(this.far.w, b, false), adFrame(this.far.w, b, true)], end: adFrame(this.end.w, b, false) }));
+    this._goalCache = new Map();
+    this.words = t('led.goal'); this.cornerWords = t('led.corner');
+    for (let i = 0; i < 2; i++) { this._goalFrames('w' + i, this.words, BG, this._goalPal[i]); this._goalFrames('c' + i, this.cornerWords, BG, this._goalPal[i]); }
+  }
+
+  // смена языка: пересобрать кадры; если сейчас реклама — сразу показать её на новом языке
+  relocalize() {
+    this._build();
+    if (!this.show && !this.trans) for (const s of this.screens) s.show(this._adFrame(s));
+  }
+
   _adFrame(s, slide = this.slide, alt = this.alt) { const a = this.ads[slide]; return s === this.far ? a.far[alt] : a.end; }
   _adsNow() { return this.screens.map((s) => this._adFrame(s)); }
 
   _goalFrames(key, words, bg, pal) {
     if (!this._goalCache.has(key)) {
-      if (this._goalCache.size > 24) for (const k of [...this._goalCache.keys()]) if (!/^w\d$/.test(k)) this._goalCache.delete(k); // очки за гол каждый раз свои
+      if (this._goalCache.size > 24) for (const k of [...this._goalCache.keys()]) if (!/^[wc]\d$/.test(k)) this._goalCache.delete(k); // очки за гол каждый раз свои
       this._goalCache.set(key, this.screens.map((s) => goalFrame(s.w, words, bg, pal)));
     }
     return this._goalCache.get(key);
@@ -293,7 +308,9 @@ export class LedBoards {
   _go(next, kind, dur, from = -1, edge = '#ffffff') {
     if (reduced) kind = 'cut';
     if (kind === 'cut') { this.screens.forEach((s, i) => s.show(next[i])); this.trans = null; return; }
-    const prev = this.screens.map((s) => { const c = canvas(s.w, ROWS); c.getContext('2d').drawImage(s.c, 0, 0); return c; });
+    // снимок текущих кадров — в постоянные холсты, без новых на каждый переход
+    this._prev = this._prev || this.screens.map((s) => canvas(s.w, ROWS));
+    const prev = this._prev.map((c, i) => { const g = c.getContext('2d'); g.clearRect(0, 0, c.width, ROWS); g.drawImage(this.screens[i].c, 0, 0); return c; });
     // порядок квадратиков 4×4: по расстоянию от стороны from со случайным разбросом — волна, а не шум
     const order = this.screens.map((s) => {
       const cells = [];
@@ -335,16 +352,23 @@ export class LedBoards {
 
   // Гол. mine — гол «наш» (золотая постановка), иначе — в цвете команды забившего, без вспышки и мигания.
   // side — ворота, в которые забили (-1 левые, 1 правые): волна идёт от них. pts — очки за гол («+pts» в конце)
-  goal({ mine = true, kit = YEL, side = 1, pts = 0 } = {}) {
+  // corner — гол в девятку: вместо «ГОЛ!» на экранах «В ДЕВЯТКУ!»
+  goal({ mine = true, kit = YEL, side = 1, pts = 0, corner = false } = {}) {
     const ptsFrames = mine && pts ? [this._goalFrames(`+${pts}`, [`+${pts}`], pts >= 200 ? '#1a1400' : BG, this._goalPal[0])] : null;
-    this.show = { kind: 'goal', t: 0, mine, kit, side, pts, step: -1, ptsFrames };
+    this.show = { kind: 'goal', t: 0, mine, kit, side, pts, step: -1, ptsFrames, wk: corner ? 'c' : 'w', words: corner ? this.cornerWords : this.words };
     if (this.bulbs) this.bulbChase = { t: 0, color: new THREE.Color(mine ? YEL : kit) };
   }
 
   // надпись на всех экранах: финал матча (держится), золотой гол (короткая и тусклее — игра уже идёт)
-  finish(text, color = YEL, { hold = 3.2, level = 0.9 } = {}) {
+  finish(text, color = YEL, { hold = 3.2, level = 0.9, enter = 'blocks', exit = 'roll' } = {}) {
     const f = this.screens.map((s) => textFrame(s.w, text, color));
-    this.show = { kind: 'finish', t: 0, step: -1, f, hold, level };
+    this.show = { kind: 'finish', t: 0, step: -1, f, hold, level, enter, exit };
+  }
+
+  // короткая вспышка надписи посреди игры (штанга, перекладина): только если экраны свободны, без мигания, тусклее гола
+  flash(text, color = '#dfe8f4') {
+    if (this.show) return;
+    this.finish(text, color, { hold: 0.6, level: 0.55, enter: 'wipe', exit: 'blocks' });
   }
 
   // розыгрыш с центра: всё праздничное сворачивается, борта возвращаются к рекламе в игровой яркости
@@ -362,25 +386,25 @@ export class LedBoards {
   // чужой — квадратики цветом соперника и один пульс яркости, с 1000 мс распад.
   _goalStep(S, dt) {
     S.t += dt;
-    const t = S.t * 1000;
+    const ms = S.t * 1000;
     if (reduced) {
-      if (S.step < 0) { S.step = 0; this._setLevel(GOAL_LEVEL); this._go(this._goalFrames('w0', WORDS, BG, this._goalPal[0]), 'cut'); }
-      if (t > 1200) { this._go(this._adsNow(), 'cut'); this._endShow(); }
+      if (S.step < 0) { S.step = 0; this._setLevel(GOAL_LEVEL); this._go(this._goalFrames(S.wk + '0', S.words, BG, this._goalPal[0]), 'cut'); }
+      if (ms > 1200) { this._go(this._adsNow(), 'cut'); this._endShow(); }
       return;
     }
     if (!S.mine) {
-      if (S.step < 0) { S.step = 0; this._go(this._goalFrames('k' + S.kit, ['ГОЛ'], BG, { core: S.kit, rim: '#ffffff' }), 'blocks', 0.3, S.side); }
-      if (S.step < 9) this._setLevel(PLAY_LEVEL + 0.3 * Math.sin(Math.min(1, t / 1000) * Math.PI));
-      if (t > 1000 && S.step === 0) { S.step = 9; this._go(this._adsNow(), 'blocks', 0.3, 0); }
+      if (S.step < 0) { S.step = 0; this._go(this._goalFrames('k' + S.kit, [t('led.foeGoal')], BG, { core: S.kit, rim: '#ffffff' }), 'blocks', 0.3, S.side); }
+      if (S.step < 9) this._setLevel(PLAY_LEVEL + 0.3 * Math.sin(Math.min(1, ms / 1000) * Math.PI));
+      if (ms > 1000 && S.step === 0) { S.step = 9; this._go(this._adsNow(), 'blocks', 0.3, 0); }
     } else {
       if (S.step < 0) { S.step = 0; this._setLevel(GOAL_LEVEL); this._go(this._yellow, 'cut'); }
-      if (S.step === 0 && t > 70) { S.step = 1; this._go(this._goalFrames('w0', WORDS, BG, this._goalPal[0]), 'blocks', 0.22, S.side); }
-      if (S.step >= 1 && S.step < 9 && t > 300 && !this.trans) {
-        const ph = Math.floor((t - 300) / 200); // 0,1,2 — мигание палитрой; 3 — очки; дальше — распад
-        if (t >= 1150) { S.step = 9; this._go(this._adsNow(), 'blocks', 0.3, 0); }
+      if (S.step === 0 && ms > 70) { S.step = 1; this._go(this._goalFrames(S.wk + '0', S.words, BG, this._goalPal[0]), 'blocks', 0.22, S.side); }
+      if (S.step >= 1 && S.step < 9 && ms > 300 && !this.trans) {
+        const ph = Math.floor((ms - 300) / 200); // 0,1,2 — мигание палитрой; 3 — очки; дальше — распад
+        if (ms >= 1150) { S.step = 9; this._go(this._adsNow(), 'blocks', 0.3, 0); }
         else if (ph + 2 !== S.step) {
           S.step = ph + 2;
-          const f = ph >= 3 && S.ptsFrames ? S.ptsFrames[0] : this._goalFrames('w' + (ph % 2), WORDS, BG, this._goalPal[ph % 2]);
+          const f = ph >= 3 && S.ptsFrames ? S.ptsFrames[0] : this._goalFrames(S.wk + (ph % 2), S.words, BG, this._goalPal[ph % 2]);
           this._go(f, 'cut');
         }
       }
@@ -398,8 +422,8 @@ export class LedBoards {
       if (S.kind === 'goal') this._goalStep(S, dt);
       else if (S.kind === 'finish') {
         S.t += dt;
-        if (S.step < 0) { S.step = 0; this._setLevel(S.level); this._go(S.f, 'blocks', 0.35, 0); }
-        if (S.t > S.hold && S.step === 0) { S.step = 1; this._go(this._adsNow(), 'roll', 0.25); }
+        if (S.step < 0) { S.step = 0; this._setLevel(S.level); this._go(S.f, S.enter, S.enter === 'wipe' ? 0.18 : 0.35, 0); }
+        if (S.t > S.hold && S.step === 0) { S.step = 1; this._go(this._adsNow(), S.exit, 0.25, 0); }
         if (S.step === 1 && !this.trans) this._endShow();
       }
     } else {

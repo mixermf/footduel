@@ -30,7 +30,8 @@ export class PointsFx {
     // кольцо-таймер удержания: дуга — доля времени до штрафа
     this.hold = [0, 1].map(() => {
       const mat = new THREE.MeshBasicMaterial({ color: 0xff3b3b, transparent: true, depthWrite: false, side: THREE.DoubleSide });
-      const m = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.62, 48), mat);
+      // полное кольцо, начиная с «12 часов»; дуга задаётся drawRange — без новой геометрии на каждом шаге таймера
+      const m = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.62, 48, 1, Math.PI / 2, Math.PI * 2), mat);
       m.rotation.x = -Math.PI / 2; m.visible = false; m.renderOrder = 9;
       scene.add(m);
       return { m, q: -1, t: 0 };
@@ -68,7 +69,7 @@ export class PointsFx {
     const h = this.hold[i];
     if (!on) { h.m.visible = false; h.q = -1; return; }
     const q = over ? 48 : Math.max(1, Math.round(frac * 48));
-    if (q !== h.q) { h.m.geometry.dispose(); h.m.geometry = new THREE.RingGeometry(0.55, 0.62, 48, 1, Math.PI / 2, (q / 48) * Math.PI * 2); h.q = q; }
+    if (q !== h.q) { h.m.geometry.setDrawRange(0, q * 6); h.q = q; } // 6 индексов на сегмент кольца
     h.m.visible = true; h.m.position.set(x, 0.03, z);
     h.over = over; h.frac = frac;
   }

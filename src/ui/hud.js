@@ -1,4 +1,8 @@
 // Компактный HUD и меню паузы. Меню полностью управляется клавиатурой или геймпадом.
+import { t } from '../i18n/i18n.js';
+
+// значение пункта меню: строка или функция (тогда текст берётся в момент отрисовки — так меню переводится на лету)
+const val = (v) => (typeof v === 'function' ? v() : v);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
 
 export class Hud {
@@ -7,14 +11,23 @@ export class Hud {
     this.score = el('div', 'hud-score');
     this.state = el('div', 'hud-state');
     this.bars = el('div', 'hud-bars');
-    this.charge = el('div', 'bar', '<label><span>Сила удара</span><span data-v></span></label><i><b></b></i>');
-    this.superBar = el('div', 'bar off', '<label><span>Суперудар</span><span data-v></span></label><i><b></b></i>');
+    this.charge = el('div', 'bar', '<label><span data-l></span><span data-v></span></label><i><b></b></i>');
+    this.superBar = el('div', 'bar off', '<label><span data-l></span><span data-v></span></label><i><b></b></i>');
     this.bars.append(this.charge, this.superBar);
     this.hint = el('div', 'hud-hint');
     this.toast = el('div', 'hud-toast');
     root.append(this.score, this.state, this.bars, this.hint, this.toast);
     this._toastT = 0; this._hintKey = ''; this._scoreKey = ''; this._stateKey = '';
     this.menu = null;
+    this.relocalize();
+  }
+
+  // смена языка: подписи полос, сброс кэшей строк (перерисуются в следующем кадре) и открытое меню
+  relocalize() {
+    this.charge.querySelector('[data-l]').textContent = t('hud.charge');
+    this.superBar.querySelector('[data-l]').textContent = t('hud.super');
+    this._hintKey = this._scoreKey = this._stateKey = ''; this._superKey = -1;
+    if (this.menu) this._renderMenu();
   }
 
   // Служебное сообщение. Со стикерами (src/ui/stickers.js): крупное — стикер «вау», обычное — тихая заметка снизу.
@@ -40,7 +53,7 @@ export class Hud {
       const sk = world.score.scored + ':' + world.score.conceded;
       if (sk !== this._scoreKey) {
         this._scoreKey = sk;
-        this.score.innerHTML = `<span>Забито</span><b>${world.score.scored}</b><span>Пропущено</span><b>${world.score.conceded}</b>`;
+        this.score.innerHTML = `<span>${t('hud.scored')}</span><b>${world.score.scored}</b><span>${t('hud.conceded')}</span><b>${world.score.conceded}</b>`;
       }
     }
     const charge = k ? k.charge : 0;
@@ -51,14 +64,13 @@ export class Hud {
       this._superKey = scKey;
       this.superBar.className = 'bar' + (sc >= 1 ? ' full' : ' off');
       this.superBar.querySelector('b').style.width = scKey + '%';
-      this.superBar.querySelector('[data-v]').textContent = sc >= 1 ? 'готов' : scKey + '%';
+      this.superBar.querySelector('[data-v]').textContent = sc >= 1 ? t('hud.ready') : scKey + '%';
     }
-    const mode = p.fall && p.fall.phase !== 'air' ? (p.fall.phase === 'rise' ? 'Встаёт' : p.fall.phase === 'land' ? 'Приземление' : 'Упал') : p.slide ? 'Подкат' : p.reach ? 'Тянется за мячом' : p.juggle ? 'Чеканка' + (p.juggle.n ? ' ×' + p.juggle.n : '') : p.lunge ? 'Рывок' : p.mode === 'guard' ? 'Защитная стойка' : p.mode === 'sprint' ? 'Спринт' : p.mode === 'control' ? 'Близкий контроль' : 'Бег';
-    const phase = !k ? (p.possession ? 'мяч под контролем' : 'без мяча')
-      : k.plan ? 'выход на мяч — удар в касание'
-        : k.phase === 'charge' ? 'заряд — направления управляют прицелом'
-        : k.phase === 'ready' ? 'подход к мячу' : k.phase === 'curl' ? 'ПОДКРУТКА' : 'удар';
-    const title = net && net.title ? net.title : net ? `Сеть${net.lobby ? ' · ' + net.lobby.code : ''} · пинг ${Math.round(net.rtt)} мс${net.rtt > 110 ? ' (высокий)' : ''}` : 'Песочница';
+    const mode = t(p.fall && p.fall.phase !== 'air' ? (p.fall.phase === 'rise' ? 'mode.rise' : p.fall.phase === 'land' ? 'mode.land' : 'mode.down') : p.slide ? 'mode.slide' : p.reach ? 'mode.reach' : p.juggle ? 'mode.juggle' : p.lunge ? 'mode.lunge' : p.mode === 'guard' ? 'mode.guard' : p.mode === 'sprint' ? 'mode.sprint' : p.mode === 'control' ? 'mode.control' : 'mode.run')
+      + (p.juggle?.n ? ' ×' + p.juggle.n : '');
+    const phase = t(!k ? (p.possession ? 'phase.control' : 'phase.free')
+      : k.plan ? 'phase.plan' : k.phase === 'charge' ? 'phase.charge' : k.phase === 'ready' ? 'phase.ready' : k.phase === 'curl' ? 'phase.curl' : 'phase.strike');
+    const title = net && net.title ? net.title : net ? `${t('hud.net')}${net.lobby ? ' · ' + net.lobby.code : ''} · ${t('hud.ping', { ms: Math.round(net.rtt) })}${net.rtt > 110 ? t('hud.pingHigh') : ''}` : t('hud.sandbox');
     const st = `${title} · <b>${mode}</b> · ${phase}${extra ? ' · ' + extra : ''}`;
     if (st !== this._stateKey) { this._stateKey = st; this.state.innerHTML = st; }
     const has = world._hasBall(p); // тот же признак, по которому симуляция выбирает действие кнопок
@@ -66,14 +78,14 @@ export class Hud {
     if (hk !== this._hintKey) {
       this._hintKey = hk;
       const h = (a) => `<kbd>${input.hintFor(a)}</kbd>`;
-      const move = input.lastDevice === 'keyboard' ? '<kbd>стрелки</kbd>' : '<kbd>левый стик</kbd>';
+      const move = `<kbd>${t(input.lastDevice === 'keyboard' ? 'hint.arrows' : 'hint.stick')}</kbd>`;
       const guard = input.lastDevice === 'keyboard' ? h('guard') : h('faceGoal');
       // подсказка зависит от того, у игрока ли мяч: те же кнопки делают разное
       this.hint.innerHTML = (has
-        ? `<b>С мячом:</b> ${move} бег и направление · ${h('kick')} удар · ${h('lob')} навес · ${h('super')} суперудар · ${h('jump')} чеканка · ${h('sprint')} ускорение`
-        : `<b>Без мяча:</b> ${move} бег · ${h('kick')} удар · ${h('lob')} подкат · ${guard} стойка и приём · ${h('jump')} прыжок · ${h('sprint')} ускорение`)
-        + ` · ${h('pause')} пауза`
-        + (input.lastDevice === 'keyboard' && !net ? ' · <kbd>R</kbd> мяч · <kbd>F</kbd> подача · <kbd>G</kbd> щит' : '');
+        ? `<b>${t('hint.withBall')}</b> ${move} ${t('hint.runDir')} · ${h('kick')} ${t('hint.kick')} · ${h('lob')} ${t('hint.lob')} · ${h('super')} ${t('hint.super')} · ${h('jump')} ${t('hint.juggle')} · ${h('sprint')} ${t('hint.sprint')}`
+        : `<b>${t('hint.noBall')}</b> ${move} ${t('hint.run')} · ${h('kick')} ${t('hint.kick')} · ${h('lob')} ${t('hint.tackle')} · ${guard} ${t('hint.guard')} · ${h('jump')} ${t('hint.jump')} · ${h('sprint')} ${t('hint.sprint')}`)
+        + ` · ${h('pause')} ${t('hint.pause')}`
+        + (input.lastDevice === 'keyboard' && !net ? ` · <kbd>R</kbd> ${t('hint.ball')} · <kbd>F</kbd> ${t('hint.serve')} · <kbd>G</kbd> ${t('hint.wall')}` : '');
     }
     this.stickers?.update(dt);
     if (this._toastT > 0) { this._toastT -= dt; if (this._toastT <= 0) this.toast.classList.remove('show'); }
@@ -91,16 +103,16 @@ export class Hud {
   _renderMenu() {
     const m = this.menu;
     const box = el('div', 'menu');
-    box.append(el('h1', '', m.title), el('p', '', m.note));
+    box.append(el('h1', '', val(m.title)), el('p', '', val(m.note)));
     m.items.forEach((it, i) => {
-      const row = el('div', 'item' + (i === m.sel ? ' sel' : ''), `<span>${it.label}</span><em>${it.value ? it.value() : ''}</em>`);
+      const row = el('div', 'item' + (i === m.sel ? ' sel' : ''), `<span>${val(it.label)}</span><em>${it.value ? it.value() : ''}</em>`);
       row.addEventListener('click', () => { m.sel = i; it.act?.(); if (this.menu) this._renderMenu(); });
       box.append(row);
     });
     if (m.controls) {
-      const t = el('table');
-      t.innerHTML = m.controls.map((r) => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('');
-      box.append(t);
+      const tb = el('table');
+      tb.innerHTML = val(m.controls).map((r) => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('');
+      box.append(tb);
     }
     this.overlay.innerHTML = '';
     this.overlay.append(box);

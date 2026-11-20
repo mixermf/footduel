@@ -1,8 +1,10 @@
 // Очки дуэли на экране: табло с часами, разбор очков за гол (строки бонусов, итог, перелёт в табло), предупреждение
 // и штраф за удержание, финальный баннер. Всё рисуется по событиям симуляции; само табло следует за world.points.
 import { sparks } from './stickers.js';
+import { t } from '../i18n/i18n.js';
 
 const KIT = ['#4dc3ff', '#ff6b6b'], GOLD = '#ffd34d';
+// русские подписи бонусов — для лаборатории и скриптов; на экран идут переводы bonus.* (src/i18n/i18n.js)
 export const BONUS_LABEL = {
   goal: 'Гол', own: 'Автогол', post: 'От штанги', bar: 'От перекладины', volley: 'С лёта', jump: 'В прыжке', fly: 'Сбоку в полёте',
   bike: 'Через себя', juggle: 'С чеканки', firstTime: 'В касание', lob: 'Парашют', long: 'Издалека', power: 'Пушка', wall: 'От борта',
@@ -46,6 +48,9 @@ export class PointsHud {
     if (!on) { this.stack.replaceChildren(); this.final.className = 'pts-final'; this.count.className = 'pts-count'; }
   }
 
+  // смена языка: строки табло пересоберутся в следующем кадре
+  relocalize() { this._clockKey = ''; for (const s of this.side) s.holdKey = '#'; }
+
   reset() {
     for (const s of this.side) { s.shown = 0; s.lock = null; s.num.textContent = '0'; }
     this.stack.replaceChildren(); this.final.className = 'pts-final'; this._sec = -1;
@@ -82,8 +87,8 @@ export class PointsHud {
           this.onArrive?.(i, big);
         }
       } else s.shown = target;
-      const t = fmt(s.shown);
-      if (s.num.textContent !== t) s.num.textContent = t;
+      const shownTxt = fmt(s.shown);
+      if (s.num.textContent !== shownTxt) s.num.textContent = shownTxt;
       s.num.classList.toggle('neg', s.shown < 0);
       // плашка удержания: с порога предупреждения — сколько держит, после порога — штраф
       const p = world.players[i], held = p && world.phase === 'play' ? p.holdT || 0 : 0;
@@ -91,12 +96,12 @@ export class PointsHud {
       if (key !== s.holdKey) {
         s.holdKey = key;
         s.hold.className = 'pts-hold' + (key ? (key === 'pen' ? ' on pen' : ' on') : '');
-        s.hold.textContent = !key ? '' : key === 'pen' ? `▼ ШТРАФ −${H.perSec}/с` : `⚠ ${i === me ? 'ДЕРЖИШЬ' : 'ДЕРЖИТ'} МЯЧ ${held.toFixed(1)} с`;
+        s.hold.textContent = !key ? '' : key === 'pen' ? t('pts.penalty', { n: H.perSec }) : t(i === me ? 'pts.holdMe' : 'pts.holdThem', { s: held.toFixed(1) });
       }
     }
     // часы: последние 30 с — жёлтые, последние 10 — красные, крупные, с отсчётом
     const ot = world.overtime, left = ot ? Math.max(0, world.P.match.overtime - world.otT) : world.clock;
-    const text = ot ? 'ЗОЛОТОЙ ГОЛ · ' + clockText(left) : clockText(left);
+    const text = ot ? t('pts.golden') + ' · ' + clockText(left) : clockText(left);
     const cls = 'pts-clock' + (ot ? ' ot' : left <= 10 ? ' crit' : left <= 30 ? ' warn' : '');
     if (text + cls !== this._clockKey) { this._clockKey = text + cls; this.clock.textContent = text; this.clock.className = cls; }
     const sec = Math.ceil(left);
@@ -114,32 +119,35 @@ export class PointsHud {
   goal(e, me, now) {
     const by = e.by, pts = e.pts || 0, mine = by === me, tone = mine ? 'gold' : 'foe';
     this.stack.replaceChildren(); this.stack.className = 'pts-stack' + (pts >= 400 ? ' x3' : pts >= 200 ? ' x2' : '');
-    const head = txt('pts-head ' + tone + (mine ? '' : ' small'), mine ? 'ГОЛ!' : 'ГОЛ СОПЕРНИКА');
-    if (mine) sparks(head, pts >= 200 ? 18 : 12, 'gold'); // чужой гол — мельче и без искр
+    // девятка: база corner вместо goal — своя шапка и больше искр
+    const corner = e.bonus?.[0]?.[0] === 'corner';
+    const head = txt('pts-head ' + tone + (mine ? '' : ' small'), t(corner ? (mine ? 'pts.corner' : 'pts.foeCorner') : mine ? 'pts.goal' : 'pts.foeGoal'));
+    if (mine) sparks(head, corner ? 26 : pts >= 200 ? 18 : 12, 'gold'); // чужой гол — мельче и без искр
     this.stack.append(head);
-    const lines = (e.bonus || []).filter((b) => b[0] !== 'goal');
+    const lines = (e.bonus || []).filter((b) => b[0] !== 'goal'); // «В девятку +500» остаётся строкой: это главная награда
     const shown = lines.slice(0, 4), step = reduced ? 0 : 90, lead = reduced ? 0 : 160;
     shown.forEach(([k, v], j) => {
       const row = el('div', 'pts-line' + (j % 2 ? ' l' : ''));
-      row.append(el('span', 'pts-lbl', BONUS_LABEL[k] || k), el('b', 'pts-val', '+' + v));
+      row.append(el('span', 'pts-lbl', t('bonus.' + k)), el('b', 'pts-val', '+' + v));
       row.style.animationDelay = lead + j * step + 'ms';
       this.stack.append(row);
     });
-    if (lines.length > 4) { const r = el('div', 'pts-line more'); r.append(el('span', 'pts-lbl', `+ ещё ${lines.length - 4}`)); r.style.animationDelay = lead + 4 * step + 'ms'; this.stack.append(r); }
+    if (lines.length > 4) { const r = el('div', 'pts-line more'); r.append(el('span', 'pts-lbl', t('pts.more', { n: lines.length - 4 }))); r.style.animationDelay = lead + 4 * step + 'ms'; this.stack.append(r); }
     const total = txt('pts-total ' + tone, '+0');
     const t0 = lead + Math.max(shown.length, 1) * step + (reduced ? 0 : 80);
     total.style.animationDelay = t0 + 'ms';
     this.stack.append(total);
-    if (pts >= 400) { const tag = el('div', 'pts-tag', 'ЛЕГЕНДАРНО'); tag.style.animationDelay = t0 + 400 + 'ms'; this.stack.append(tag); }
+    if (pts >= 400) { const tag = el('div', 'pts-tag', t('pts.legend')); tag.style.animationDelay = t0 + 400 + 'ms'; this.stack.append(tag); }
     // итог «крутится» от 0 до pts за 380 мс: каждое новое число чуть подпрыгивает, на последнем — удар и блик
     const startCount = performance.now() + t0, dur = reduced ? 1 : 380;
-    let lastClick = 0, shownN = -1;
+    let lastClick = 0, shownN = -1, lastTxt = 0;
     const tick = () => {
       if (!total.isConnected) return;
       const t = performance.now(), u = Math.min(1, Math.max(0, (t - startCount) / dur));
       const n = Math.round(pts * (1 - (1 - u) ** 3));
-      if (n !== shownN) {
-        shownN = n; setTxt(total, '+' + n);
+      // число меняется не чаще ~22 раз в секунду: каждая смена — перерисовка крупного текста с обводкой
+      if (n !== shownN && (u >= 1 || t - lastTxt >= 45)) {
+        shownN = n; lastTxt = t; setTxt(total, '+' + n);
         if (!reduced && u < 1) total.style.scale = String(1 + 0.05 * ((n & 1) ? 1 : -0.4));
         if (u > 0 && u < 1 && t - lastClick > 70) { lastClick = t; this.onCount?.(u); }
       }
@@ -158,7 +166,7 @@ export class PointsHud {
     if (pts >= 200 && !reduced) { this.flash.className = 'pts-flash'; void this.flash.offsetWidth; this.flash.className = 'pts-flash on' + (pts >= 400 ? ' gold' : ''); }
     this.stack.classList.remove('out');
     this._stackT = Math.min(2.2, (arrive + 250) / 1000);
-    return pts >= 400 ? 0.3 : pts >= 200 ? 0.2 : 0.12;
+    return corner ? 0.34 : pts >= 400 ? 0.3 : pts >= 200 ? 0.2 : 0.12;
   }
 
   // перелёт по дуге: вверх и в сторону табло, с уменьшением; за ним два «призрака»-шлейфа
@@ -210,7 +218,7 @@ export class PointsHud {
 
   // итог матча: победа, поражение или ничья со счётом
   finish(winner, me, points, names) {
-    const res = winner < 0 ? 'НИЧЬЯ' : winner === me ? 'ПОБЕДА' : 'ПОРАЖЕНИЕ';
+    const res = t(winner < 0 ? 'pts.draw' : winner === me ? 'pts.win' : 'pts.loss');
     const h = txt('pts-final-h ' + (winner === me || winner < 0 ? 'gold' : 'bad'), res);
     this.final.replaceChildren(h, el('div', 'pts-final-s', `${names[0]}  ${fmt(points[0])} : ${fmt(points[1])}  ${names[1]}`));
     if (winner === me) sparks(h, 22, 'gold');

@@ -687,3 +687,51 @@ test('игрок не заходит в ворота: упор в раму сп�
   for (let i = 0; i < 240; i++) w.step(inp({ mz: -1 }));
   assert.ok(p.z >= F.goalWidth / 2 + R - 1e-6, 'сбоку игрок упирается в сетку: ' + p.z.toFixed(2));
 });
+
+test('гол в девятку: событие goal_line несёт точку захода, угол узнаётся, середина — нет', () => {
+  const P = createProfile(), F = P.field, r = P.ball.radius;
+  const w = new World(createProfile(), { seed: 3, duel: true });
+  const shotAt = (y, z) => {
+    const b = createBall(P); b.x = 7.6; b.y = y; b.z = z; b.vx = 22; b.vy = 0.4;
+    const ev = []; for (let i = 0; i < 120; i++) stepBall(b, 1 / 120, P, ev, null);
+    return ev.find((e) => e.type === 'goal_line');
+  };
+  const top = F.goalHeight - F.postRadius - r, side = F.goalWidth / 2 - F.postRadius - r;
+  const corner = shotAt(top - 0.12, side - 0.12);
+  assert.ok(corner && corner.y !== undefined && corner.z !== undefined, 'мяч зашёл, точка записана');
+  assert.ok(w._isCorner(corner), `девятка: y=${corner.y.toFixed(2)} z=${corner.z.toFixed(2)}`);
+  const mirror = shotAt(top - 0.12, -(side - 0.12));
+  assert.ok(mirror && w._isCorner(mirror), 'второй верхний угол');
+  const middle = shotAt(1.0, 0.2);
+  assert.ok(middle && !w._isCorner(middle), 'по центру — не девятка');
+  const low = shotAt(0.4, side - 0.12);
+  assert.ok(low && !w._isCorner(low), 'нижний угол — не девятка');
+});
+
+test('после гола мяч не в ноги: падает отвесно с высоты на точку перед воротами пропустившего, удержание — с первого касания', () => {
+  const run = (standOnSpot) => {
+    const w = new World(createProfile(), { seed: 4, duel: true }); w.recording = false; w.reset('duel');
+    const P = w.P, F = P.field, D = P.match.drop, ps = w.players;
+    // удар в правые ворота (их защищает игрок 1): гол игрока 0, вводит игрок 1
+    Object.assign(w.ball, { x: F.length / 2 - F.goalInset - 1.5, y: 0.5, z: 0, vx: 12, vy: 0, vz: 0 });
+    const spotX = ps[1].side * (F.length / 2 - F.goalInset - D.dist);
+    let goal = null, ko = null, maxY = 0, landed = null;
+    const empty = emptyInput();
+    for (let i = 0; i < 120 * 5 && !landed; i++) {
+      if (goal && !ko && standOnSpot) { ps[1].x = spotX; ps[1].z = 0.2; ps[1].vx = ps[1].vz = 0; w._placeFeet(ps[1]); }
+      w.step(empty, empty);
+      for (const e of w.events) { if (e.type === 'goal') goal = e; if (e.type === 'kickoff') ko = { ...e, y: w.ball.y, vx: w.ball.vx, vz: w.ball.vz }; if (ko && e.type === 'bounce' && !landed) landed = { x: w.ball.x, z: w.ball.z }; }
+      if (ko) maxY = Math.max(maxY, w.ball.y);
+    }
+    return { goal, ko, maxY, landed, w, spotX, D };
+  };
+  const r = run(false);
+  assert.ok(r.goal && r.goal.by === 0, 'гол игрока 0');
+  assert.ok(r.ko && r.ko.drop && r.ko.to === 1, 'ввод — пропустившему, сбросом');
+  assert.ok(Math.abs(r.ko.x - r.spotX) < 1e-9 && r.ko.z === 0, 'точка — на оси в ' + r.D.dist + ' м от его ворот');
+  assert.ok(Math.abs(r.ko.y - r.D.height) < 0.05 && r.ko.vx === 0 && r.ko.vz === 0, 'падает отвесно с высоты ' + r.ko.y.toFixed(2));
+  assert.ok(r.landed && Math.hypot(r.landed.x - r.spotX, r.landed.z) < 0.05, 'приземляется на точку');
+  assert.equal(r.w.toucher, -1, 'упавший мяч ничей: удержание не идёт, пока его не тронут');
+  const s = run(true);
+  assert.ok(Math.abs(s.ko.z) >= s.D.shift - 1e-9 && Math.sign(s.ko.z) !== Math.sign(0.2), 'игрок стоит на точке — мяч падает в стороне от него: z ' + s.ko.z);
+});

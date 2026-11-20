@@ -14,16 +14,16 @@ test('ввод: новые кнопки переживают упаковку к
   assert.ok(!z.lobPressed && !z.lobHeld && !z.superHeld);
 });
 
-test('навес: мяч уходит круто вверх, перелетает стоящего игрока и опускается на дальности по заряду', () => {
+test('навес: мяч перелетает стоящего игрока невысокой быстрой дугой и опускается на дальности по заряду', () => {
   const K = createProfile().kick;
   for (const hold of [0.1, 0.25]) {
     const w = make('free'), b = w.ball, p = w.player;
-    let kick = null, apex = 0, land = null, over = null, x0 = 0, z0 = 0;
+    let kick = null, apex = 0, land = null, over = null, x0 = 0, z0 = 0, t0 = 0, flight = 0;
     for (let i = 0; i < 600 && !land; i++) {
       w.step(inp({ lobPressed: i === 0, lobHeld: i < hold * 120 }));
       for (const e of w.events) {
-        if (e.type === 'kick') { kick = e; x0 = b.x; z0 = b.z; }
-        if (kick && e.type === 'bounce') land = Math.hypot(b.x - x0, b.z - z0);
+        if (e.type === 'kick') { kick = e; x0 = b.x; z0 = b.z; t0 = i; }
+        if (kick && e.type === 'bounce') { land = Math.hypot(b.x - x0, b.z - z0); flight = (i - t0) / 120; }
       }
       if (kick) {
         apex = Math.max(apex, b.y);
@@ -35,9 +35,75 @@ test('навес: мяч уходит круто вверх, перелетае�
     assert.ok(land !== null && Math.abs(land - want) < 1.2, `приземление ${land?.toFixed(2)} при расчёте ${want.toFixed(2)}`);
     assert.ok(over > 2.1, 'мяч проходит над головой игрока в 2,5 м: ' + over.toFixed(2));
     assert.ok(apex < w.P.field.fenceHeight - 0.3, 'навес не задевает потолок: ' + apex.toFixed(2));
-    assert.ok(apex > land * 0.3, 'дуга крутая: высота ' + apex.toFixed(2) + ' на дальности ' + land.toFixed(2));
+    // не «парашют»: прежний навес на 6–9 м поднимался на 0,42–0,44 дальности и летел 1,5–1,9 с
+    assert.ok(apex < land * 0.4 + 0.1, 'дуга невысокая: высота ' + apex.toFixed(2) + ' на дальности ' + land.toFixed(2));
+    assert.ok(flight < 0.08 * land + 0.9, 'навес летит быстро: ' + flight.toFixed(2) + ' с на ' + land.toFixed(2) + ' м');
     assert.equal(p.slide, null, 'с мячом та же кнопка подкат не включает');
   }
+});
+
+test('навес: дальний навес не задевает потолок и садится на расчётной дальности (крыша сетки не сбивает подбор)', () => {
+  const K = createProfile().kick, w = make('free'), b = w.ball, p = w.player;
+  const sh = 4.3 * p.side; p.x += sh; b.x += sh; for (const f of p.feet) f.x += sh; // от своих ворот: до чужих ~16 м
+  let kick = null, apex = 0, land = null, x0 = 0, z0 = 0;
+  for (let i = 0; i < 600 && !land; i++) {
+    w.step(inp({ lobPressed: i === 0, lobHeld: i < 70 }));
+    for (const e of w.events) {
+      if (e.type === 'kick') { kick = e; x0 = b.x; z0 = b.z; }
+      if (kick && e.type === 'bounce') land = Math.hypot(b.x - x0, b.z - z0);
+    }
+    if (kick) apex = Math.max(apex, b.y);
+  }
+  assert.ok(kick && kick.charge > 0.99, 'полный заряд');
+  assert.ok(land !== null && Math.abs(land - K.lobMax) < 1.2, 'дальность ' + land?.toFixed(2));
+  assert.ok(apex < 5.2, 'высота дальнего навеса ' + apex.toFixed(2));
+});
+
+test('навес: с места точный, с хода разброс по направлению и дальности заметно больше', () => {
+  const K = createProfile().kick;
+  const spread = (run) => {
+    const lat = [], rng = [];
+    for (let seed = 1; seed <= 10; seed++) {
+      const w = new World(createProfile(), { seed }); w.reset('free');
+      const b = w.ball, p = w.player, pre = run ? 40 : 0;
+      let kick = null, land = null, x0 = 0, z0 = 0;
+      for (let i = 0; i < 600 && !land; i++) {
+        const s = i - pre;
+        w.step(inp({ mx: run && !kick ? -p.side : 0, lobPressed: s === 0, lobHeld: s >= 0 && s < 12 }));
+        for (const e of w.events) {
+          if (e.type === 'kick' && !kick) { kick = e; x0 = b.x; z0 = b.z; }
+          if (kick && e.type === 'bounce' && !land) land = { d: Math.hypot(b.x - x0, b.z - z0), z: b.z - z0 };
+        }
+      }
+      assert.ok(kick && land, 'навес ' + (run ? 'с хода' : 'с места') + ', seed ' + seed);
+      lat.push(Math.abs(land.z)); rng.push(Math.abs(land.d / (K.lobMin + (K.lobMax - K.lobMin) * kick.charge) - 1));
+    }
+    return { lat: Math.max(...lat), rng: Math.max(...rng) };
+  };
+  const still = spread(false), moving = spread(true);
+  assert.ok(still.lat < 0.25 && still.rng < 0.05, `с места: вбок до ${still.lat.toFixed(2)} м, дальность ±${(still.rng * 100).toFixed(0)}%`);
+  assert.ok(moving.lat > 3 * still.lat && moving.rng > 0.12, `с хода: вбок до ${moving.lat.toFixed(2)} м, дальность ±${(moving.rng * 100).toFixed(0)}%`);
+});
+
+test('удар головой в прыжке: мяч на уровне головы уходит в створ чужих ворот, стрелка задаёт сторону', () => {
+  const run = (jt, mz) => {
+    const w = new World(createProfile(), { seed: 3 }); w.reset('free'); const b = w.ball, p = w.player;
+    for (let i = 0; i < 30; i++) w.step(inp());
+    Object.assign(b, { x: p.x - 6 * p.side, y: 3.2, z: p.z, vx: 8 * p.side, vy: 2.5, vz: 0, wx: 0, wy: 0, wz: 0, rolling: false });
+    let hd = null, cross = null;
+    for (let i = 0; i < 400 && !cross; i++) {
+      w.step(inp({ jumpPressed: i === jt, mz: i >= jt ? mz : 0 }));
+      for (const e of w.events) if (e.type === 'header') hd = e;
+      if (hd && Math.abs(b.x) > w.P.field.length / 2 - w.P.field.goalInset) cross = { y: b.y, z: b.z, x: b.x };
+    }
+    return { hd, cross, side: p.side };
+  };
+  const mid = run(52, 0), up = run(70, -1), down = run(70, 1);
+  assert.ok(mid.hd && mid.hd.aimed, 'в прыжке лицом к воротам — удар головой');
+  assert.ok(mid.cross && mid.cross.x * mid.side < 0, 'мяч идёт к чужим воротам');
+  assert.ok(Math.abs(mid.cross.z) < 1.4 && mid.cross.y < 2.2, `в створ: z ${mid.cross.z.toFixed(2)}, высота ${mid.cross.y.toFixed(2)}`);
+  assert.ok(up.cross && down.cross && up.cross.z < mid.cross.z - 0.5 && down.cross.z > mid.cross.z + 0.5,
+    `стрелка разводит удары: ${up.cross?.z.toFixed(2)} / ${mid.cross.z.toFixed(2)} / ${down.cross?.z.toFixed(2)}`);
 });
 
 test('суперудар: без полной шкалы не бьёт; с полной — мяч летит быстрее обычного предела, шкала обнуляется', () => {
@@ -527,4 +593,37 @@ test('kick held with no ball in the strike zone: the arrows move the player, and
   w2.ball.x = q.x + 2; w2.ball.z = q.z + 7;
   for (let i = 0; i < 200; i++) { w2.step(inp({ kickHeld: i < 60, kickPressed: i === 0, mz: i < 60 ? -1 : 0 })); for (const e of w2.events) if (e.type === 'kick_empty') empty = true; }
   assert.ok(empty && !q.kick, 'released away from the ball: an empty kick');
+});
+
+test('выпад: мяч, проходящий навстречу в длину ноги, бьётся вынесенной ногой — слабее; за спиной и выше пояса — нет', () => {
+  // ux, uz — откуда летит мяч относительно взгляда на чужие ворота; off — на сколько мимо корпуса; lead — за сколько до сближения нажат удар
+  const run = (ux, uz, h, off, lead, v = 7) => {
+    const w = make('free'), b = w.ball, p = w.player;
+    for (let i = 0; i < 20; i++) w.step(inp());
+    const att = -p.side, cx = p.x - uz * off * att, cz = p.z + ux * off, d0 = v * lead * 1.03, g = 9.81, vy0 = -2 + g * lead;
+    Object.assign(b, { x: cx - ux * att * d0, y: h - vy0 * lead + 0.5 * g * lead * lead, z: cz - uz * d0, vx: ux * att * v, vy: vy0, vz: uz * v, wx: 0, wy: 0, wz: 0, rolling: false });
+    let kick = null, miss = false, x0 = p.x, z0 = p.z, moved = 0;
+    for (let i = 0; i < 120 && !kick; i++) {
+      w.step(inp({ kickPressed: i === 0, kickHeld: i < 40 }));
+      moved = Math.max(moved, Math.hypot(p.x - x0, p.z - z0));
+      for (const e of w.events) { if (e.type === 'kick') kick = e; if (e.type === 'kick_miss') miss = true; }
+    }
+    return { kick, miss, moved };
+  };
+  // навстречу, на уровне колена, в 0,8 м сбоку, удар нажат за 0,25 с: раньше — пустой замах
+  for (const off of [0.55, 0.8, 1.05]) {
+    const r = run(-1, 0, 0.6, off, 0.25);
+    assert.ok(r.kick && !r.miss, 'встречный мяч в ' + off + ' м достаётся');
+    assert.ok(r.moved < 0.75, 'не дальше шага: ' + r.moved.toFixed(2));
+  }
+  const s = run(-1, 0, 0.6, 1.05, 0.25);
+  assert.ok(s.kick.stretch && s.kick.speed < createProfile().kick.maxSpeed * 0.85, 'выпад слабее полного удара: ' + s.kick.speed.toFixed(1));
+  // на уровне пояса навстречу: удар с лёта без прыжка
+  assert.ok(run(-1, 0, 0.9, 0.8, 0.3).kick, 'мяч на уровне пояса бьётся с места');
+  // на уровне груди навстречу без прыжка — не удар ногой
+  assert.ok(!run(-1, 0, 1.4, 1.05, 0.25).kick, 'мяч на уровне груди без прыжка не бьётся');
+  // далеко сбоку — не дотянуться даже выпадом
+  assert.ok(!run(-1, 0, 0.6, 1.9, 0.25).kick, 'мяч в 1,9 м — мимо');
+  // ни в одном случае — замах без контакта
+  for (const off of [0.3, 0.55, 0.8, 1.05, 1.3]) for (const lead of [0.18, 0.25, 0.35]) assert.ok(!run(-0.707, -0.707, 0.6, off, lead).miss && !run(-1, 0, 0.9, off, lead).miss, `без пустых замахов: ${off} м, ${lead} с`);
 });
